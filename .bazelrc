@@ -1,0 +1,5 @@
+build --enable_workspace
+test --enable_workspace
+
+# Apple Silicon specific settings
+build:macos_arm64 --cpu=darwin_arm64

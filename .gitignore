@@ -1,0 +1,11 @@
+/bazel-bin
+/bazel-llm_inference
+/bazel-out
+/bazel-testlogs
+profile.perf
+profile.perf.gz
+perf.data
+perf.data.old
+mac_profile.trace
+.DS_Store
+tmp
