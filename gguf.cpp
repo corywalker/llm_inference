@@ -6,9 +6,7 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
-#include <fstream>
 #include <stdexcept>
 
 #include "common.h"

@@ -1,8 +1,6 @@
 #ifndef OPS_H
 #define OPS_H
 
-#include <iostream>
-#include <stdexcept>
 #include <vector>
 
 // Forward declarations

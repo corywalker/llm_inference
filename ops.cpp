@@ -3,9 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
-#include <numeric>
 
-#include "common.h"
 #include "gguf.h"
 #include "thread_pool.h"
 #if defined(__x86_64__)

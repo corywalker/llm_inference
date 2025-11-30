@@ -5,8 +5,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
-#include <iostream>
 #include <random>
 #include <vector>
 
