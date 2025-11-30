@@ -29,7 +29,7 @@ cc_library(
 cc_library(
     name = "ops",
     srcs = ["ops.cpp"],
-    hdrs = ["ops.h", "thread_pool.h"],
+    hdrs = ["ops.h", "thread_pool.h", "tensor.h"],
     copts = select({
         "//:macos_arm64": [],
         "//conditions:default": ["-mavx2", "-mfma"],

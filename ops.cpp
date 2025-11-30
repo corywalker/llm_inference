@@ -169,6 +169,49 @@ void softmax(std::vector<float>& x) {
   }
 }
 
+// Refer to
+// https://github.com/ggml-org/llama.cpp/blob/1f5accb8d0056e6099cd5b772b1cb787dd590a13/ggml/src/ggml-cpu/ops.cpp#L5546C13-L5546C42
+// as a golden implementation.
+void rope(tensor_3& tensor, int n_rot, float rope_freq_base,
+          float rope_freq_scale, int pos) {
+  uint32_t n_tokens = tensor.size();
+  if (n_tokens == 0) {
+    return;
+  }
+  uint32_t n_heads = tensor[0].size();
+  if (n_heads == 0) {
+    return;
+  }
+
+  for (uint32_t t = 0; t < n_tokens; ++t) {
+    for (int i = 0; i < n_rot / 2; ++i) {
+      const float freq = 1.0f / powf(rope_freq_base, (float)(2 * i) / n_rot);
+      const float val = (pos + t) * freq / rope_freq_scale;
+      const float fcr = cosf(val);
+      const float fci = sinf(val);
+
+      for (uint32_t h = 0; h < n_heads; ++h) {
+        tensor_1& vec = tensor[t][h];
+        const float v0 = vec[i];
+        const float v1 = vec[i + n_rot / 2];
+
+        vec[i] = v0 * fcr - v1 * fci;
+        vec[i + n_rot / 2] = v0 * fci + v1 * fcr;
+      }
+    }
+  }
+}
+
+void scale(tensor_3& tensor, float scale_factor) {
+  for (auto& token_tensor : tensor) {
+    for (auto& head_tensor : token_tensor) {
+      for (float& val : head_tensor) {
+        val *= scale_factor;
+      }
+    }
+  }
+}
+
 // Quantized matrix-vector multiplication for Q4_0 weights
 // Reference: llama.cpp ggml_vec_dot_q4_0_q8_0
 void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
