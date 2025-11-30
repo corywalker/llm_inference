@@ -13,7 +13,7 @@ bazel build -c opt //:llm_inference
 mkdir -p ./tmp
 echo "Running llama cpp..."
 # llama-eval-callback does --no-cnv by default
-../llama.cpp/build/bin/llama-eval-callback "${COMMON_ARGS[@]}" -s 123 > ./tmp/llama_cpp_out.txt 2>&1
+~/llama.cpp/bin/llama-eval-callback "${COMMON_ARGS[@]}" -s 123 > ./tmp/llama_cpp_out.txt 2>&1
 sed -E -i.bak 's/^ggml_debug:[[:space:]]+//g' ./tmp/llama_cpp_out.txt
 sed -i.bak 's/^                                 //g' ./tmp/llama_cpp_out.txt
 rm -f ./tmp/llama_cpp_out.txt.bak
