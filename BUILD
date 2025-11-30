@@ -53,6 +53,7 @@ cc_binary(
 
 cc_test(
     name = "gguf_test",
+    size = "small",
     srcs = ["gguf_test.cpp"],
     deps = [
         ":gguf",
@@ -63,6 +64,7 @@ cc_test(
 
 cc_test(
     name = "ops_test",
+    size = "small",
     srcs = ["ops_test.cpp"],
     deps = [
         ":ops",
@@ -72,6 +74,7 @@ cc_test(
 
 cc_test(
     name = "model_test",
+    size = "small",
     srcs = ["model_test.cpp"],
     deps = [
         ":model",
