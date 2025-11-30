@@ -166,7 +166,7 @@ TEST(GGUFTest, Q4_0_MatVecMul) {
   uint16_t f16_scales[] = {0x3800, 0x3666, 0x3333,
                            0x3000};  // 0.5, 0.4, 0.3, 0.2 in f16 approx
 
-  for (int row = 0; row < n_rows; row++) {
+  for (size_t row = 0; row < n_rows; row++) {
     uint16_t scale = f16_scales[row];
     q4_data.push_back(scale & 0xFF);
     q4_data.push_back((scale >> 8) & 0xFF);
