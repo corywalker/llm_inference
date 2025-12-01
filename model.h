@@ -100,9 +100,6 @@ class Model {
   void load_hparams(GGUFFile& gguf_file);
   void map_tensors(GGUFFile& gguf_file);
   void load_vocabulary();
-  void rope(tensor_3& tensor, int n_rot, float rope_freq_base,
-            float rope_freq_scale, int pos);
-  void scale(tensor_3& tensor, float scale_factor);
   tensor_1 run_norm(const tensor_1& input, const TensorInfo* norm_weight);
   tensor_2 run_norm(const tensor_2& input, const TensorInfo* norm_weight);
   tensor_3 run_norm(const tensor_3& input, const TensorInfo* norm_weight);

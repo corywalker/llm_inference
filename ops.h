@@ -1,9 +1,9 @@
 #ifndef OPS_H
 #define OPS_H
 
-#include <iostream>
-#include <stdexcept>
 #include <vector>
+
+#include "tensor.h"
 
 // Forward declarations
 struct TensorInfo;
@@ -15,6 +15,9 @@ void mat_vec_mul(std::vector<float>& o, const std::vector<float>& w,
 void softmax(std::vector<float>& x);
 void vec_mat_mul(std::vector<float>& o, const std::vector<float>& x,
                  const std::vector<std::vector<float>>& w);
+void rope(tensor_3& tensor, int n_rot, float rope_freq_base,
+          float rope_freq_scale, int pos);
+void scale(tensor_3& tensor, float scale_factor);
 
 // Quantized matrix-vector multiplication: o = w_q4 * x
 // w_tensor contains Q4_0 quantized weights (stored in GGUF file)

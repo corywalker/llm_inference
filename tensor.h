@@ -2,6 +2,7 @@
 #define TENSOR_H
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>

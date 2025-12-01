@@ -7,9 +7,6 @@ echo "Visit https://huggingface.co/settings/tokens to create a new token if you 
 if [ ! -d "./gemma-3-1b-it-qat-q4_0-gguf" ]; then
   git clone https://huggingface.co/google/gemma-3-1b-it-qat-q4_0-gguf
 fi
-#if [ ! -d "./gemma-2-2b-it-GGUF" ]; then
-#  git clone https://huggingface.co/google/gemma-2-2b-it-GGUF
-#fi
 
 # Install Bazel
 sudo apt-get update && sudo apt-get install -y curl gnupg clang-format && \

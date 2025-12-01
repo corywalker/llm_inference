@@ -3,6 +3,15 @@ config_setting(
     values = {"cpu": "darwin_arm64"},
 )
 
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+    targets = {
+      "//...": "",
+    },
+)
+
 cc_library(
     name = "common",
     hdrs = ["common.h"],
@@ -20,7 +29,7 @@ cc_library(
 cc_library(
     name = "ops",
     srcs = ["ops.cpp"],
-    hdrs = ["ops.h", "thread_pool.h"],
+    hdrs = ["ops.h", "thread_pool.h", "tensor.h"],
     copts = select({
         "//:macos_arm64": [],
         "//conditions:default": ["-mavx2", "-mfma"],
@@ -53,6 +62,7 @@ cc_binary(
 
 cc_test(
     name = "gguf_test",
+    size = "small",
     srcs = ["gguf_test.cpp"],
     deps = [
         ":gguf",
@@ -63,6 +73,7 @@ cc_test(
 
 cc_test(
     name = "ops_test",
+    size = "small",
     srcs = ["ops_test.cpp"],
     deps = [
         ":ops",
@@ -72,6 +83,7 @@ cc_test(
 
 cc_test(
     name = "model_test",
+    size = "small",
     srcs = ["model_test.cpp"],
     deps = [
         ":model",
