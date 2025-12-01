@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <numeric>
+#include <cstdint>
 #include <string>
 #include <vector>
 
