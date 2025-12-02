@@ -1,11 +1,15 @@
-#include "ops.h"
+#if defined(__APPLE__)
+#include "metal/ops.h"
+#endif
 
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 
 #include "gguf.h"
+#include "ops.h"
 #include "thread_pool.h"
+
 #if defined(__x86_64__)
 #include <immintrin.h>
 #endif
@@ -15,10 +19,20 @@
 
 static std::unique_ptr<ThreadPool> pool;
 static int g_n_threads = 1;
+static bool g_metal_enabled = false;
 
 void init_ops(int n_threads) {
   g_n_threads = n_threads;
   pool = std::make_unique<ThreadPool>(n_threads);
+}
+
+void set_metal_enabled(bool enabled) {
+  g_metal_enabled = enabled;
+#if defined(__APPLE__)
+  if (enabled) {
+    init_metal();
+  }
+#endif
 }
 
 // GGML implementation appears to be at:
@@ -216,6 +230,13 @@ void scale(tensor_3& tensor, float scale_factor) {
 // Reference: llama.cpp ggml_vec_dot_q4_0_q8_0
 void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
                       const GGUFFile& gguf_file, const std::vector<float>& x) {
+#if defined(__APPLE__)
+  if (g_metal_enabled) {
+    metal_mat_vec_mul_q4_0(o, w_tensor, gguf_file, x);
+    return;
+  }
+#endif
+
   // Matrix dimensions: w_tensor is [rows x cols] in Q4_0 format
   // w_tensor.shape[0] = embedding dimension (cols)
   // w_tensor.shape[1] = output dimension (rows)

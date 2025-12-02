@@ -35,7 +35,10 @@ cc_library(
         "//conditions:default": ["-mavx2", "-mfma"],
     }),
     visibility = ["//:__subpackages__"],
-    deps = [":common", ":gguf"],
+    deps = [":common", ":gguf"] + select({
+        "//:macos_arm64": ["//metal:metal_ops"],
+        "//conditions:default": [],
+    }),
 )
 
 cc_library(

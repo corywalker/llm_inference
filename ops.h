@@ -29,4 +29,7 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
 // Initialize the operations library (e.g. thread pool)
 void init_ops(int n_threads);
 
+// Enable or disable Metal backend
+void set_metal_enabled(bool enabled);
+
 #endif  // OPS_H

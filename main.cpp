@@ -7,6 +7,7 @@
 #include "cxxopts.hpp"  // Include cxxopts
 #include "gguf.h"
 #include "model.h"
+#include "ops.h"
 
 bool verbose_g = false;
 int n_threads = std::max(1, (int)std::thread::hardware_concurrency() / 2);
@@ -38,6 +39,8 @@ int main(int argc, char** argv) {
       cxxopts::value<int>()->default_value(std::to_string(n_threads)))(
       "v,verbose", "Verbose output",
       cxxopts::value<bool>()->default_value("false"))(
+      "metal", "Enable Metal backend",
+      cxxopts::value<bool>()->default_value("false"))(
       "no-cnv", "Do not apply chat template",
       cxxopts::value<bool>()->default_value("false"))("h,help", "Print usage");
 
@@ -51,6 +54,9 @@ int main(int argc, char** argv) {
   verbose_g = result["verbose"].as<bool>();
   n_threads = result["threads"].as<int>();
   init_ops(n_threads);
+  if (result["metal"].as<bool>()) {
+    set_metal_enabled(true);
+  }
   bool apply_chat_template = !result["no-cnv"].as<bool>();
   int n_predict = result["predict"].as<int>();
 
