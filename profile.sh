@@ -25,7 +25,7 @@ if [ "$OS" = "Linux" ]; then
     fi
 elif [ "$OS" = "Darwin" ]; then
     if [ "$TEXT_OUTPUT" = true ]; then
-        bazel-bin/llm_inference --model ~/Documents/temp/gemma-3-1b-it-q4_0.gguf --prompt="Write a poem" &
+        bazel-bin/llm_inference --model ~/Documents/temp/gemma-3-1b-it-q4_0.gguf --prompt="Write a poem" --metal &
         PID=$!
         sample $PID 10 -f /tmp/sample.txt
         kill $PID || true
@@ -34,7 +34,7 @@ elif [ "$OS" = "Darwin" ]; then
         rm /tmp/sample.txt
     else
         rm -rf mac_profile.trace
-        xcrun xctrace record --template 'Time Profiler' --time-limit 15s --launch --output mac_profile.trace -- bazel-bin/llm_inference --model ~/Documents/temp/gemma-3-1b-it-q4_0.gguf --prompt="Write a poem" || true
+        xcrun xctrace record --template 'Metal System Trace' --time-limit 15s --launch --output mac_profile.trace -- bazel-bin/llm_inference --model ~/Documents/temp/gemma-3-1b-it-q4_0.gguf --prompt="Write a poem" --metal || true
         killall Instruments || true
         open mac_profile.trace
     fi
