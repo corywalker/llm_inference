@@ -279,8 +279,8 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
     kv_cache.v.insert(kv_cache.v.end(), v_heads.begin(), v_heads.end());
   }
 
-  tensor_2 all_attention_results;
-
+  tensor_2 kqv_out;
+  kqv_out.reserve(n_tokens);
   for (uint32_t t = 0; t < n_tokens; ++t) {
     tensor_1 concatenated_head_results(n_head * n_embd_head, 0.0f);
 
@@ -340,9 +340,13 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
         }
       }
     }
-    VERBOSE(print_tensor(concatenated_head_results,
-                         "kqv_out-" + std::to_string(layer_index)));
+    kqv_out.push_back(concatenated_head_results);
+  }
+  VERBOSE(print_tensor(kqv_out, "kqv_out-" + std::to_string(layer_index)));
 
+  tensor_2 all_attention_results;
+  all_attention_results.reserve(n_tokens);
+  for (const auto& concatenated_head_results : kqv_out) {
     tensor_1 token_result(output_weights->shape[1]);
     mat_vec_mul_q4_0(token_result, *output_weights, gguf_file_,
                      concatenated_head_results);
@@ -474,16 +478,29 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
       exit(1);
     }
 
-    tensor_2 ffn_outputs;
+    tensor_2 ffn_gate_outputs;
+    ffn_gate_outputs.reserve(normalized_states2.size());
+    tensor_2 ffn_up_outputs;
+    ffn_up_outputs.reserve(normalized_states2.size());
     for (const auto& normalized_x2 : normalized_states2) {
       tensor_1 ffn_gate_output(layer.ffn_gate_weight->shape[1]);
       tensor_1 ffn_up_output(layer.ffn_up_weight->shape[1]);
       mat_vec_mul_q4_0(ffn_gate_output, *layer.ffn_gate_weight, gguf_file_,
                        normalized_x2);
-      VERBOSE(print_tensor(ffn_gate_output, "ffn_gate-" + std::to_string(i)));
       mat_vec_mul_q4_0(ffn_up_output, *layer.ffn_up_weight, gguf_file_,
                        normalized_x2);
-      VERBOSE(print_tensor(ffn_up_output, "ffn_up-" + std::to_string(i)));
+      ffn_gate_outputs.push_back(ffn_gate_output);
+      ffn_up_outputs.push_back(ffn_up_output);
+    }
+    VERBOSE(print_tensor(ffn_gate_outputs, "ffn_gate-" + std::to_string(i)));
+    VERBOSE(print_tensor(ffn_up_outputs, "ffn_up-" + std::to_string(i)));
+
+    tensor_2 all_ffn_hidden_outputs;
+    all_ffn_hidden_outputs.reserve(normalized_states2.size());
+    for (size_t token_idx = 0; token_idx < normalized_states2.size();
+         ++token_idx) {
+      tensor_1& ffn_gate_output = ffn_gate_outputs[token_idx];
+      const tensor_1& ffn_up_output = ffn_up_outputs[token_idx];
 
       for (size_t j = 0; j < ffn_gate_output.size(); ++j) {
         ffn_gate_output[j] =
@@ -494,10 +511,17 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
       for (size_t j = 0; j < ffn_hidden.size(); ++j) {
         ffn_hidden[j] = ffn_gate_output[j] * ffn_up_output[j];
       }
+      all_ffn_hidden_outputs.push_back(ffn_hidden);
+    }
+    VERBOSE(
+        print_tensor(all_ffn_hidden_outputs, "ffn_geglu-" + std::to_string(i)));
 
+    tensor_2 ffn_outputs;
+    ffn_outputs.reserve(normalized_states2.size());
+    for (const auto& ffn_hidden_val : all_ffn_hidden_outputs) {
       tensor_1 ffn_output(layer.ffn_down_weight->shape[1]);
       mat_vec_mul_q4_0(ffn_output, *layer.ffn_down_weight, gguf_file_,
-                       ffn_hidden);
+                       ffn_hidden_val);
       ffn_outputs.push_back(ffn_output);
     }
     VERBOSE(print_tensor(ffn_outputs, "ffn_out-" + std::to_string(i)));
