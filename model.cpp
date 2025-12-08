@@ -137,7 +137,7 @@ void Model::map_tensors(GGUFFile& gguf_file) {
   }
 }
 
-tensor_2 Model::embed_and_scale_tokens(const std::vector<int>& tokens) {
+tensor_2 Model::embed_tokens(const std::vector<int>& tokens) {
   const auto& token_embd_tensor = *token_embd_weight();
   size_t embedding_length = token_embd_tensor.shape[0];
 
@@ -148,8 +148,6 @@ tensor_2 Model::embed_and_scale_tokens(const std::vector<int>& tokens) {
     std::vector<uint16_t> embedding_vector_f16(embedding_length);
     size_t row_size_bytes = embedding_length * sizeof(uint16_t);
 
-    const float scaling =
-        std::sqrt(static_cast<float>(hparams_.embedding_length));
     for (int token : tokens) {
       gguf_file_.read_tensor_data_region(
           token_embd_tensor, token * row_size_bytes,
@@ -157,12 +155,12 @@ tensor_2 Model::embed_and_scale_tokens(const std::vector<int>& tokens) {
 
       tensor_1 embedding_vector(embedding_length);
       for (size_t i = 0; i < embedding_length; ++i) {
-        embedding_vector[i] = f16_to_f32(embedding_vector_f16[i]) * scaling;
+        embedding_vector[i] = f16_to_f32(embedding_vector_f16[i]);
       }
       embeddings.push_back(embedding_vector);
     }
   } else {
-    std::cerr << "Error: embed_and_scale_tokens: Unsupported token embedding "
+    std::cerr << "Error: embed_tokens: Unsupported token embedding "
                  "tensor type."
               << std::endl;
     exit(1);
@@ -171,15 +169,26 @@ tensor_2 Model::embed_and_scale_tokens(const std::vector<int>& tokens) {
   return embeddings;
 }
 
+void Model::scale_embeddings(tensor_2& embeddings) {
+  const float scaling =
+      std::sqrt(static_cast<float>(hparams_.embedding_length));
+  for (auto& embedding_vector : embeddings) {
+    for (float& val : embedding_vector) {
+      val *= scaling;
+    }
+  }
+}
+
 tensor_1 Model::run_norm(const tensor_1& input,
-                         const TensorInfo* norm_weight_tensor) {
+                         const TensorInfo* norm_weight_tensor, int layer_id) {
   tensor_1 norm_weight(norm_weight_tensor->shape[0]);
   gguf_file_.read_tensor_data(*norm_weight_tensor, norm_weight.data(),
                               norm_weight.size() * sizeof(float));
-  VERBOSE(print_tensor(norm_weight, "1d norm weight"));
+  VERBOSE(
+      print_tensor(norm_weight, "1d norm weight-" + std::to_string(layer_id)));
   tensor_1 normalized_x(input.size());
   rms_norm(normalized_x, input, hparams_.f_norm_rms_eps);
-  VERBOSE(print_tensor(normalized_x, "rms_norm"));
+  VERBOSE(print_tensor(normalized_x, "norm-" + std::to_string(layer_id)));
   tensor_1 norm_output(input.size());
   for (size_t j = 0; j < normalized_x.size(); ++j) {
     norm_output[j] = normalized_x[j] * norm_weight[j];
@@ -188,46 +197,67 @@ tensor_1 Model::run_norm(const tensor_1& input,
 }
 
 tensor_2 Model::run_norm(const tensor_2& input,
-                         const TensorInfo* norm_weight_tensor) {
-  tensor_2 normalized_states;
-  tensor_1 norm_weight(norm_weight_tensor->shape[0]);
-  gguf_file_.read_tensor_data(*norm_weight_tensor, norm_weight.data(),
-                              norm_weight.size() * sizeof(float));
+                         const TensorInfo* norm_weight_tensor, int layer_id) {
+  tensor_2 rms_norm_outputs;
+  rms_norm_outputs.reserve(input.size());
   for (const auto& state : input) {
     tensor_1 normalized_x(state.size());
     rms_norm(normalized_x, state, hparams_.f_norm_rms_eps);
-    tensor_1 norm_output(state.size());
-    for (size_t j = 0; j < normalized_x.size(); ++j) {
-      norm_output[j] = normalized_x[j] * norm_weight[j];
-    }
-    normalized_states.push_back(norm_output);
+    rms_norm_outputs.push_back(normalized_x);
   }
-  return normalized_states;
-}
+  VERBOSE(print_tensor(rms_norm_outputs, "norm-" + std::to_string(layer_id)));
 
-tensor_3 Model::run_norm(const tensor_3& input,
-                         const TensorInfo* norm_weight_tensor) {
-  tensor_3 normalized_states;
   tensor_1 norm_weight(norm_weight_tensor->shape[0]);
   gguf_file_.read_tensor_data(*norm_weight_tensor, norm_weight.data(),
                               norm_weight.size() * sizeof(float));
 
-  normalized_states.reserve(input.size());
+  tensor_2 final_outputs;
+  final_outputs.reserve(input.size());
+  for (const auto& normalized_x : rms_norm_outputs) {
+    tensor_1 norm_output(normalized_x.size());
+    for (size_t j = 0; j < normalized_x.size(); ++j) {
+      norm_output[j] = normalized_x[j] * norm_weight[j];
+    }
+    final_outputs.push_back(norm_output);
+  }
+  return final_outputs;
+}
+
+tensor_3 Model::run_norm(const tensor_3& input,
+                         const TensorInfo* norm_weight_tensor, int layer_id) {
+  tensor_1 norm_weight(norm_weight_tensor->shape[0]);
+  gguf_file_.read_tensor_data(*norm_weight_tensor, norm_weight.data(),
+                              norm_weight.size() * sizeof(float));
+
+  tensor_3 rms_norm_outputs;
+  rms_norm_outputs.reserve(input.size());
   for (const auto& state_2d : input) {
-    tensor_2 normalized_2d;
-    normalized_2d.reserve(state_2d.size());
+    tensor_2 current_2d_norms;
+    current_2d_norms.reserve(state_2d.size());
     for (const auto& state_1d : state_2d) {
       tensor_1 normalized_x(state_1d.size());
       rms_norm(normalized_x, state_1d, hparams_.f_norm_rms_eps);
-      tensor_1 norm_output(state_1d.size());
+      current_2d_norms.push_back(normalized_x);
+    }
+    rms_norm_outputs.push_back(current_2d_norms);
+  }
+  VERBOSE(print_tensor(rms_norm_outputs, "norm-" + std::to_string(layer_id)));
+
+  tensor_3 final_outputs;
+  final_outputs.reserve(input.size());
+  for (const auto& state_2d : rms_norm_outputs) {
+    tensor_2 current_2d_outputs;
+    current_2d_outputs.reserve(state_2d.size());
+    for (const auto& normalized_x : state_2d) {
+      tensor_1 norm_output(normalized_x.size());
       for (size_t j = 0; j < normalized_x.size(); ++j) {
         norm_output[j] = normalized_x[j] * norm_weight[j];
       }
-      normalized_2d.push_back(norm_output);
+      current_2d_outputs.push_back(norm_output);
     }
-    normalized_states.push_back(normalized_2d);
+    final_outputs.push_back(current_2d_outputs);
   }
-  return normalized_states;
+  return final_outputs;
 }
 
 tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
@@ -329,17 +359,17 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
   LOG_VERBOSE("Starting forward pass.");
 
   // 1. Embedding lookup
-  tensor_2 hidden_states = embed_and_scale_tokens(tokens);
-
+  tensor_2 hidden_states = embed_tokens(tokens);
+  VERBOSE(print_tensor(hidden_states, "imp_embed"));
+  scale_embeddings(hidden_states);
   VERBOSE(print_tensor(hidden_states, "inp_scaled"));
 
   // Transformer blocks
-  LOG_VERBOSE("Processing transformer blocks...");
   for (size_t i = 0; i < layers_.size(); ++i) {
     auto& layer = layers_[i];
 
     tensor_2 normalized_states =
-        run_norm(hidden_states, layer.attn_norm_weight);
+        run_norm(hidden_states, layer.attn_norm_weight, i);
     VERBOSE(print_tensor(normalized_states, "attn_norm-" + std::to_string(i)));
 
     uint32_t n_head = hparams_.attention_head_count;
@@ -359,14 +389,16 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     }
     VERBOSE(print_tensor(q_vectors, "Qcur-" + std::to_string(i)));
     tensor_3 q_reshaped = reshape_3d(q_vectors, n_tokens, n_head, n_embd_head);
-    VERBOSE(print_tensor(q_reshaped, "q_reshaped-" + std::to_string(i)));
-    tensor_3 q_cur = run_norm(q_reshaped, layer.attn_q_norm_weight);
-    VERBOSE(print_tensor(q_cur, "q_cur after norm-" + std::to_string(i)));
+    VERBOSE(
+        print_tensor(q_reshaped, "Qcur-" + std::to_string(i) + " (reshaped)"));
+    tensor_3 q_cur = run_norm(q_reshaped, layer.attn_q_norm_weight, i);
+    VERBOSE(print_tensor(q_cur, "Qcur_normed-" + std::to_string(i)));
     rope(q_cur, n_embd_head, hparams_.rope_freq_base, hparams_.rope_freq_scale,
          pos);
-    VERBOSE(print_tensor(q_cur, "Qcur (post rope) -" + std::to_string(i)));
+    VERBOSE(print_tensor(q_cur, "Qcur-" + std::to_string(i) + " (post rope)"));
     scale(q_cur, hparams_.f_attention_scale);
-    VERBOSE(print_tensor(q_cur, "Qcur (scaled) -" + std::to_string(i)));
+    VERBOSE(
+        print_tensor(q_cur, "node_9-" + std::to_string(i) + " (post scale)"));
 
     // K
     tensor_2 k_vectors;
@@ -378,12 +410,13 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     VERBOSE(print_tensor(k_vectors, "Kcur-" + std::to_string(i)));
     tensor_3 k_reshaped =
         reshape_3d(k_vectors, n_tokens, n_head_kv, n_embd_head);
-    VERBOSE(print_tensor(k_reshaped, "k_reshaped-" + std::to_string(i)));
-    tensor_3 k_cur = run_norm(k_reshaped, layer.attn_k_norm_weight);
-    VERBOSE(print_tensor(k_cur, "k_cur after norm-" + std::to_string(i)));
+    VERBOSE(
+        print_tensor(k_reshaped, "Kcur-" + std::to_string(i) + " (reshaped)"));
+    tensor_3 k_cur = run_norm(k_reshaped, layer.attn_k_norm_weight, i);
+    VERBOSE(print_tensor(k_cur, "Kcur_normed-" + std::to_string(i)));
     rope(k_cur, n_embd_head, hparams_.rope_freq_base, hparams_.rope_freq_scale,
          pos);
-    VERBOSE(print_tensor(k_cur, "Kcur (post rope) -" + std::to_string(i)));
+    VERBOSE(print_tensor(k_cur, "Kcur-" + std::to_string(i) + " (post rope)"));
 
     // V
     tensor_2 v_vectors;
@@ -395,7 +428,8 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     VERBOSE(print_tensor(v_vectors, "Vcur-" + std::to_string(i)));
     tensor_3 v_reshaped =
         reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head);
-    VERBOSE(print_tensor(v_reshaped, "v_reshaped-" + std::to_string(i)));
+    VERBOSE(
+        print_tensor(v_reshaped, "Vcur-" + std::to_string(i) + " (reshaped)"));
 
     // Looks mostly accurate even up to initial {Q,K,V}cur calculations, except
     // that Q,K,V seem to have some slight differences, whereas attn_norm was
@@ -417,7 +451,7 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
     if (layer.post_attention_norm_weight) {
       attention_results =
-          run_norm(attention_results, layer.post_attention_norm_weight);
+          run_norm(attention_results, layer.post_attention_norm_weight, i);
       VERBOSE(print_tensor(attention_results,
                            "attn_post_norm-" + std::to_string(i)));
     }
@@ -430,7 +464,7 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     VERBOSE(print_tensor(hidden_states, "sa_out-" + std::to_string(i)));
 
     tensor_2 normalized_states2 =
-        run_norm(hidden_states, layer.ffn_norm_weight);
+        run_norm(hidden_states, layer.ffn_norm_weight, i);
     VERBOSE(print_tensor(normalized_states2, "ffn_norm-" + std::to_string(i)));
 
     if (layer.ffn_gate_weight == nullptr || layer.ffn_up_weight == nullptr ||
@@ -469,7 +503,7 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     VERBOSE(print_tensor(ffn_outputs, "ffn_out-" + std::to_string(i)));
 
     if (layer.post_ffw_norm_weight) {
-      ffn_outputs = run_norm(ffn_outputs, layer.post_ffw_norm_weight);
+      ffn_outputs = run_norm(ffn_outputs, layer.post_ffw_norm_weight, i);
     }
     VERBOSE(print_tensor(ffn_outputs, "ffn_post_norm-" + std::to_string(i)));
 
@@ -489,7 +523,7 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
   VERBOSE(print_tensor(last_hidden_state, "last_hidden_state"));
 
   tensor_1 final_normalized_x =
-      run_norm(last_hidden_state, output_norm_weight());
+      run_norm(last_hidden_state, output_norm_weight(), -1);
 
   VERBOSE(print_tensor(final_normalized_x, "result_norm"));
 

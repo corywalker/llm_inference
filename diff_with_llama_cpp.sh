@@ -10,7 +10,7 @@ fi
 MODEL_LOC="$1"
 LLAMA_EVAL_CALLBACK_BIN="$2"
 
-COMMON_ARGS=( -m "$MODEL_LOC" -p "Hello" -v -n 2 )
+COMMON_ARGS=( -m "$MODEL_LOC" -p "Hello" -v -n 1 )
 
 bazel build -c opt //:llm_inference
 mkdir -p ./tmp

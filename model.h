@@ -80,12 +80,17 @@ class Model {
                                           int pos);
 
   /**
-   * @brief Embeds tokens into vectors and scales them.
+   * @brief Embeds tokens into vectors.
    * @param tokens Input tokens.
    * @return Embedded vectors.
    */
-  std::vector<std::vector<float>> embed_and_scale_tokens(
-      const std::vector<int>& tokens);
+  tensor_2 embed_tokens(const std::vector<int>& tokens);
+
+  /**
+   * @brief Scales embedding vectors.
+   * @param embeddings Embedding vectors to scale in-place.
+   */
+  void scale_embeddings(tensor_2& embeddings);
 
   /**
    * @brief Tokenizes a prompt string.
@@ -100,9 +105,12 @@ class Model {
   void load_hparams(GGUFFile& gguf_file);
   void map_tensors(GGUFFile& gguf_file);
   void load_vocabulary();
-  tensor_1 run_norm(const tensor_1& input, const TensorInfo* norm_weight);
-  tensor_2 run_norm(const tensor_2& input, const TensorInfo* norm_weight);
-  tensor_3 run_norm(const tensor_3& input, const TensorInfo* norm_weight);
+  tensor_1 run_norm(const tensor_1& input, const TensorInfo* norm_weight,
+                      int layer_id);
+  tensor_2 run_norm(const tensor_2& input, const TensorInfo* norm_weight,
+                      int layer_id);
+  tensor_3 run_norm(const tensor_3& input, const TensorInfo* norm_weight,
+                      int layer_id);
   tensor_2 run_attn(KVCacheLayer& kv_cache, const TensorInfo* output_weights,
                     const tensor_3& q_heads, const tensor_3& k_heads,
                     const tensor_3& v_heads, uint32_t n_head,
