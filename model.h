@@ -105,8 +105,7 @@ class Model {
   void load_hparams(GGUFFile& gguf_file);
   void map_tensors(GGUFFile& gguf_file);
   void load_vocabulary();
-  tensor_1 run_norm(const tensor_1& input, const TensorInfo* norm_weight,
-                    int layer_id);
+  tensor_1 run_norm(const tensor_1& input, const TensorInfo* norm_weight);
   tensor_2 run_norm(const tensor_2& input, const TensorInfo* norm_weight,
                     int layer_id);
   tensor_3 run_norm(const tensor_3& input, const TensorInfo* norm_weight,

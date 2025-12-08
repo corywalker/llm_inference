@@ -180,15 +180,13 @@ void Model::scale_embeddings(tensor_2& embeddings) {
 }
 
 tensor_1 Model::run_norm(const tensor_1& input,
-                         const TensorInfo* norm_weight_tensor, int layer_id) {
+                         const TensorInfo* norm_weight_tensor) {
   tensor_1 norm_weight(norm_weight_tensor->shape[0]);
   gguf_file_.read_tensor_data(*norm_weight_tensor, norm_weight.data(),
                               norm_weight.size() * sizeof(float));
-  VERBOSE(
-      print_tensor(norm_weight, "1d norm weight-" + std::to_string(layer_id)));
   tensor_1 normalized_x(input.size());
   rms_norm(normalized_x, input, hparams_.f_norm_rms_eps);
-  VERBOSE(print_tensor(normalized_x, "norm-" + std::to_string(layer_id)));
+  VERBOSE(print_tensor(normalized_x, "norm"));
   tensor_1 norm_output(input.size());
   for (size_t j = 0; j < normalized_x.size(); ++j) {
     norm_output[j] = normalized_x[j] * norm_weight[j];
@@ -437,8 +435,7 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
     // Looks mostly accurate even up to initial {Q,K,V}cur calculations, except
     // that Q,K,V seem to have some slight differences, whereas attn_norm was
-    // exact. So, I suspect it's because llama.cpp might be doing multiplication
-    // in float32 but we're doing float only. I've determined that the
+    // exact. I've determined that the
     // difference in value between this and llama.cpp is because llama.cpp casts
     // the float32 attn_norm to float8 before doing the matrix multiply.
     // Specifically, at this line:
@@ -539,15 +536,12 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
     VERBOSE(print_tensor(hidden_states, "l_out-" + std::to_string(i)));
   }
-  LOG_VERBOSE(" done.");
 
   // Final RMSNorm
-  LOG_VERBOSE("Final RMSNorm...");
   tensor_1& last_hidden_state = hidden_states.back();
-  VERBOSE(print_tensor(last_hidden_state, "last_hidden_state"));
 
   tensor_1 final_normalized_x =
-      run_norm(last_hidden_state, output_norm_weight(), -1);
+      run_norm(last_hidden_state, output_norm_weight());
 
   VERBOSE(print_tensor(final_normalized_x, "result_norm"));
 
@@ -557,7 +551,6 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
   size_t vocab_size = token_embd_weight_tensor.shape[1];
 
   tensor_1 logits(vocab_size);
-  LOG_VERBOSE("Calculating logits...");
 
   if (!token_embd_weight_f32_.empty()) {
     mat_vec_mul(logits, token_embd_weight_f32_, final_normalized_x);
