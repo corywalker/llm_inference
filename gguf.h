@@ -119,7 +119,8 @@ class GGUFFile {
   void load();
 };
 
-float f16_to_f32(uint16_t f16);
+extern float gguf_table_f16_f32[65536];
+inline float f16_to_f32(uint16_t f16) { return gguf_table_f16_f32[f16]; }
 float dequantize_q4_0(uint8_t q4, float d);
 void print_value(const GGUFValue& value);
 

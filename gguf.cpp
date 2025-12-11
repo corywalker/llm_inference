@@ -69,7 +69,16 @@ static inline float ggml_compute_fp16_to_fp32(uint16_t h) {
 // Helper function to convert F16 to F32
 // Reference impl is at llama.cpp/ggml/src/ggml-impl.h
 // ggml_compute_fp16_to_fp32()
-float f16_to_f32(uint16_t f16) { return ggml_compute_fp16_to_fp32(f16); }
+float gguf_table_f16_f32[65536];
+
+struct F16TableInit {
+  F16TableInit() {
+    for (int i = 0; i < 65536; i++) {
+      gguf_table_f16_f32[i] = ggml_compute_fp16_to_fp32(i);
+    }
+  }
+};
+static F16TableInit f16_init;
 
 class GGUFFile::GGUFReader {
  public:
