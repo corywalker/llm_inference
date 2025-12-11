@@ -239,7 +239,10 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
 #if defined(__aarch64__) || defined(__arm64__)
     // Process each output row
     for (size_t row = start_row; row < end_row; ++row) {
-      float32x4_t sum_vec = vdupq_n_f32(0.0f);
+      float32x4_t sum0 = vdupq_n_f32(0.0f);
+      float32x4_t sum1 = vdupq_n_f32(0.0f);
+      float32x4_t sum2 = vdupq_n_f32(0.0f);
+      float32x4_t sum3 = vdupq_n_f32(0.0f);
       const float* x_ptr = x.data();
       size_t col = 0;
 
@@ -278,10 +281,10 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
           const float32x4_t w3 = vmulq_f32(
               vcvtq_f32_s32(vmovl_s16(vget_high_s16(q_s16_hi))), scale_vec);
 
-          sum_vec = vfmaq_f32(sum_vec, vld1q_f32(x_ptr + col + 0), w0);
-          sum_vec = vfmaq_f32(sum_vec, vld1q_f32(x_ptr + col + 4), w1);
-          sum_vec = vfmaq_f32(sum_vec, vld1q_f32(x_ptr + col + 8), w2);
-          sum_vec = vfmaq_f32(sum_vec, vld1q_f32(x_ptr + col + 12), w3);
+          sum0 = vfmaq_f32(sum0, vld1q_f32(x_ptr + col + 0), w0);
+          sum1 = vfmaq_f32(sum1, vld1q_f32(x_ptr + col + 4), w1);
+          sum2 = vfmaq_f32(sum2, vld1q_f32(x_ptr + col + 8), w2);
+          sum3 = vfmaq_f32(sum3, vld1q_f32(x_ptr + col + 12), w3);
         }
 
         // dequantize and dot product for high nibbles
@@ -298,15 +301,18 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
           const float32x4_t w3 = vmulq_f32(
               vcvtq_f32_s32(vmovl_s16(vget_high_s16(q_s16_hi))), scale_vec);
 
-          sum_vec = vfmaq_f32(sum_vec, vld1q_f32(x_ptr + col + 16), w0);
-          sum_vec = vfmaq_f32(sum_vec, vld1q_f32(x_ptr + col + 20), w1);
-          sum_vec = vfmaq_f32(sum_vec, vld1q_f32(x_ptr + col + 24), w2);
-          sum_vec = vfmaq_f32(sum_vec, vld1q_f32(x_ptr + col + 28), w3);
+          sum0 = vfmaq_f32(sum0, vld1q_f32(x_ptr + col + 16), w0);
+          sum1 = vfmaq_f32(sum1, vld1q_f32(x_ptr + col + 20), w1);
+          sum2 = vfmaq_f32(sum2, vld1q_f32(x_ptr + col + 24), w2);
+          sum3 = vfmaq_f32(sum3, vld1q_f32(x_ptr + col + 28), w3);
         }
         col += block_size;
       }
 
-      float sum = vaddvq_f32(sum_vec);
+      sum0 = vaddq_f32(sum0, sum1);
+      sum2 = vaddq_f32(sum2, sum3);
+      sum0 = vaddq_f32(sum0, sum2);
+      float sum = vaddvq_f32(sum0);
 
       // Scalar remainder for remainder of blocks
       for (size_t block_idx = num_blocks_simd; block_idx < blocks_per_row;
