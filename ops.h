@@ -29,4 +29,13 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
 // Initialize the operations library (e.g. thread pool)
 void init_ops(int n_threads);
 
+// Q8_0 quantization block for activations
+struct BlockQ8_0 {
+  float d;        // scaling factor
+  int8_t qs[32];  // quantized values
+};
+
+void quantize_row_q8_0(const std::vector<float>& x, std::vector<BlockQ8_0>& y,
+                       size_t size);
+
 #endif  // OPS_H
