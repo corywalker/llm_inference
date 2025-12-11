@@ -1,5 +1,6 @@
 #include "ops.h"
 
+#include <cassert>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -212,6 +213,32 @@ void scale(tensor_3& tensor, float scale_factor) {
   }
 }
 
+// Reference: llama.cpp/ggml/src/ggml-quants.c : quantize_row_q8_0
+void quantize_row_q8_0(const std::vector<float>& x, std::vector<BlockQ8_0>& y,
+                       size_t size) {
+  assert(size % 32 == 0);
+  size_t nb = size / 32;
+  y.resize(nb);
+
+  for (size_t i = 0; i < nb; i++) {
+    float amax = 0.0f;
+    for (int j = 0; j < 32; j++) {
+      const float v = std::abs(x[i * 32 + j]);
+      if (amax < v) amax = v;
+    }
+
+    const float d = amax / 127.0f;
+    const float id = d ? 1.0f / d : 0.0f;
+
+    y[i].d = d;
+
+    for (int j = 0; j < 32; j++) {
+      const float x0 = x[i * 32 + j] * id;
+      y[i].qs[j] = std::round(x0);
+    }
+  }
+}
+
 // Quantized matrix-vector multiplication for Q4_0 weights
 // Reference: llama.cpp ggml_vec_dot_q4_0_q8_0
 void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
@@ -229,122 +256,79 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
   o.resize(n_rows);
 
   // Q4_0 format: blocks of 32 elements
-  // Each block: 2 bytes (float16 scale) + 16 bytes (32 x 4-bit values packed)
   const size_t block_size = 32;
   const size_t bytes_per_block = 2 + 16;  // 2 bytes scale + 16 bytes quants
   const size_t blocks_per_row = (n_cols + block_size - 1) / block_size;
   const uint8_t* w_data = gguf_file.get_tensor_data(w_tensor);
 
+  // Pre-quantize x to Q8_0 for ARM DOT optimization
+#if defined(__aarch64__) || defined(__arm64__)
+  std::vector<BlockQ8_0> x_q8_0;
+  quantize_row_q8_0(x, x_q8_0, n_cols);
+#endif
+
   auto compute_range = [&](size_t start_row, size_t end_row) {
 #if defined(__aarch64__) || defined(__arm64__)
-    // Process each output row
     for (size_t row = start_row; row < end_row; ++row) {
-      float32x4_t sum0 = vdupq_n_f32(0.0f);
-      float32x4_t sum1 = vdupq_n_f32(0.0f);
-      float32x4_t sum2 = vdupq_n_f32(0.0f);
-      float32x4_t sum3 = vdupq_n_f32(0.0f);
-      const float* x_ptr = x.data();
-      size_t col = 0;
+      float sum_f = 0.0f;
 
-      const size_t num_blocks_simd = n_cols / block_size;
+      const BlockQ8_0* x_blocks = x_q8_0.data();
+      const uint8_t* row_w_ptr =
+          w_data + row * blocks_per_row * bytes_per_block;
 
-      for (size_t block_idx = 0; block_idx < num_blocks_simd; ++block_idx) {
-        const uint8_t* block_ptr =
-            w_data + (row * blocks_per_row + block_idx) * bytes_per_block;
+      const uint8x16_t mask_low = vdupq_n_u8(0x0F);
+      const int8x16_t v_8 = vdupq_n_s8(8);
+
+      size_t block_idx = 0;
+      for (; block_idx < blocks_per_row; ++block_idx) {
+        const uint8_t* block_ptr = row_w_ptr + block_idx * bytes_per_block;
+
+        // Q4_0 scale
         const uint16_t* f16_scale_ptr =
             reinterpret_cast<const uint16_t*>(block_ptr);
-        const uint8_t* quants_ptr = block_ptr + sizeof(uint16_t);
+        float w_scale = f16_to_f32(*f16_scale_ptr);
 
-        float scale = f16_to_f32(*f16_scale_ptr);
+        // Q8_0 scale
+        float x_scale = x_blocks[block_idx].d;
 
-        const float32x4_t scale_vec = vdupq_n_f32(scale);
-        const int8x16_t s8_8 = vdupq_n_s8(8);
-        const uint8x16_t q_packed = vld1q_u8(quants_ptr);
+        // Combined scale
+        float combined_scale = w_scale * x_scale;
 
-        const uint8x16_t q_l = vandq_u8(q_packed, vdupq_n_u8(0x0F));
-        const int8x16_t q_l_s8 = vsubq_s8(vreinterpretq_s8_u8(q_l), s8_8);
+        // Q4_0 quants (16 bytes)
+        const uint8_t* w_quants_ptr = block_ptr + sizeof(uint16_t);
+        uint8x16_t v_q4 = vld1q_u8(w_quants_ptr);
 
-        const uint8x16_t q_h = vshrq_n_u8(q_packed, 4);
-        const int8x16_t q_h_s8 = vsubq_s8(vreinterpretq_s8_u8(q_h), s8_8);
+        // Expand Q4_0 to int8 (low and high nibbles) and subtract 8
+        // Low nibbles correspond to first 16 elements
+        int8x16_t v_w_lo =
+            vsubq_s8(vreinterpretq_s8_u8(vandq_u8(v_q4, mask_low)), v_8);
+        // High nibbles correspond to next 16 elements
+        int8x16_t v_w_hi =
+            vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8(v_q4, 4)), v_8);
 
-        // dequantize and dot product for low nibbles
-        {
-          const int16x8_t q_s16_lo = vmovl_s8(vget_low_s8(q_l_s8));
-          const int16x8_t q_s16_hi = vmovl_s8(vget_high_s8(q_l_s8));
+        // Q8_0 quants (32 bytes)
+        const int8_t* x_quants_ptr = x_blocks[block_idx].qs;
+        int8x16_t v_x_lo = vld1q_s8(x_quants_ptr);
+        int8x16_t v_x_hi = vld1q_s8(x_quants_ptr + 16);
 
-          const float32x4_t w0 = vmulq_f32(
-              vcvtq_f32_s32(vmovl_s16(vget_low_s16(q_s16_lo))), scale_vec);
-          const float32x4_t w1 = vmulq_f32(
-              vcvtq_f32_s32(vmovl_s16(vget_high_s16(q_s16_lo))), scale_vec);
-          const float32x4_t w2 = vmulq_f32(
-              vcvtq_f32_s32(vmovl_s16(vget_low_s16(q_s16_hi))), scale_vec);
-          const float32x4_t w3 = vmulq_f32(
-              vcvtq_f32_s32(vmovl_s16(vget_high_s16(q_s16_hi))), scale_vec);
+        // Dot product
+        // Sum into temporary accumulator to apply scale later?
+        // Ideally we want to accumulate as much as possible in int32 before
+        // converting to float. But scales change every block. So we must
+        // accumulate in float.
 
-          sum0 = vfmaq_f32(sum0, vld1q_f32(x_ptr + col + 0), w0);
-          sum1 = vfmaq_f32(sum1, vld1q_f32(x_ptr + col + 4), w1);
-          sum2 = vfmaq_f32(sum2, vld1q_f32(x_ptr + col + 8), w2);
-          sum3 = vfmaq_f32(sum3, vld1q_f32(x_ptr + col + 12), w3);
-        }
+        int32x4_t dot = vdupq_n_s32(0);
+        dot = vdotq_s32(dot, v_w_lo, v_x_lo);
+        dot = vdotq_s32(dot, v_w_hi, v_x_hi);
 
-        // dequantize and dot product for high nibbles
-        {
-          const int16x8_t q_s16_lo = vmovl_s8(vget_low_s8(q_h_s8));
-          const int16x8_t q_s16_hi = vmovl_s8(vget_high_s8(q_h_s8));
-
-          const float32x4_t w0 = vmulq_f32(
-              vcvtq_f32_s32(vmovl_s16(vget_low_s16(q_s16_lo))), scale_vec);
-          const float32x4_t w1 = vmulq_f32(
-              vcvtq_f32_s32(vmovl_s16(vget_high_s16(q_s16_lo))), scale_vec);
-          const float32x4_t w2 = vmulq_f32(
-              vcvtq_f32_s32(vmovl_s16(vget_low_s16(q_s16_hi))), scale_vec);
-          const float32x4_t w3 = vmulq_f32(
-              vcvtq_f32_s32(vmovl_s16(vget_high_s16(q_s16_hi))), scale_vec);
-
-          sum0 = vfmaq_f32(sum0, vld1q_f32(x_ptr + col + 16), w0);
-          sum1 = vfmaq_f32(sum1, vld1q_f32(x_ptr + col + 20), w1);
-          sum2 = vfmaq_f32(sum2, vld1q_f32(x_ptr + col + 24), w2);
-          sum3 = vfmaq_f32(sum3, vld1q_f32(x_ptr + col + 28), w3);
-        }
-        col += block_size;
+        int32_t scalar_dot = vaddvq_s32(dot);
+        sum_f += scalar_dot * combined_scale;
       }
 
-      sum0 = vaddq_f32(sum0, sum1);
-      sum2 = vaddq_f32(sum2, sum3);
-      sum0 = vaddq_f32(sum0, sum2);
-      float sum = vaddvq_f32(sum0);
-
-      // Scalar remainder for remainder of blocks
-      for (size_t block_idx = num_blocks_simd; block_idx < blocks_per_row;
-           ++block_idx) {
-        const uint8_t* block_ptr =
-            w_data + (row * blocks_per_row + block_idx) * bytes_per_block;
-        const uint16_t* f16_scale_ptr =
-            reinterpret_cast<const uint16_t*>(block_ptr);
-        const uint8_t* quants_ptr = block_ptr + sizeof(uint16_t);
-
-        float scale = f16_to_f32(*f16_scale_ptr);
-
-        const int half_block_size = 16;
-        for (int i = 0; i < half_block_size; ++i) {
-          if (col + i >= n_cols) break;
-          uint8_t q_low = quants_ptr[i] & 0x0F;
-          float w_val = dequantize_q4_0(q_low, scale);
-          sum += w_val * x[col + i];
-        }
-        for (int i = 0; i < half_block_size; ++i) {
-          if (col + half_block_size + i >= n_cols) break;
-          uint8_t q_high = quants_ptr[i] >> 4;
-          float w_val = dequantize_q4_0(q_high, scale);
-          sum += w_val * x[col + half_block_size + i];
-        }
-        col += block_size;
-      }
-
-      o[row] = sum;
+      o[row] = sum_f;
     }
 #elif defined(__x86_64__)
-    // Process each output row
+    // Original x86 AVX implementation
     for (size_t row = start_row; row < end_row; ++row) {
       __m256 sum_vec = _mm256_setzero_ps();
       const float* x_ptr = x.data();
