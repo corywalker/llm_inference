@@ -8,4 +8,5 @@ perf.data
 perf.data.old
 mac_profile.trace
 .DS_Store
+run_llamacpp.sh
 tmp
