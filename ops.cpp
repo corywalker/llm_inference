@@ -328,7 +328,7 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
       o[row] = sum_f;
     }
 #elif defined(__x86_64__)
-    // Original x86 AVX implementation
+    // Process each output row.
     for (size_t row = start_row; row < end_row; ++row) {
       __m256 sum_vec = _mm256_setzero_ps();
       const float* x_ptr = x.data();
