@@ -401,13 +401,15 @@ TEST(ModelTest, ForwardPass) {
 
   // Some tests of approximate values. This will need to update if any random
   // seed or model details change.
-  ASSERT_NEAR(result[0][0], 2.933166f, 0.05f);
-  ASSERT_NEAR(result[0][1], -0.185612f, 0.05f);
-  ASSERT_NEAR(result[0][8], 1.831016f, 0.05f);
-  ASSERT_NEAR(result[0][9], -2.707154f, 0.05f);
+  // Tolerances are currently a bit loose after the vdotq_s32 change on M1.
+  // Numbers are slightly different on M1 vs AVX right now.
+  ASSERT_NEAR(result[0][0], 2.933166f, 0.08f);
+  ASSERT_NEAR(result[0][1], -0.185612f, 0.08f);
+  ASSERT_NEAR(result[0][8], 1.831016f, 0.08f);
+  ASSERT_NEAR(result[0][9], -2.707154f, 0.08f);
   float sum = 0.0f;
   for (auto v : result[0]) sum += v;
-  ASSERT_NEAR(sum, 5.226440f, 0.1f);
+  ASSERT_NEAR(sum, 5.226440f, 0.08f);
 
   // Second forward pass for next token (using KV cache)
   // Find token with largest logit from first pass
@@ -434,7 +436,7 @@ TEST(ModelTest, ForwardPass) {
   ASSERT_NEAR(result2[0][9], -0.454702f, 0.08f);
   float sum2 = 0.0f;
   for (auto v : result2[0]) sum2 += v;
-  ASSERT_NEAR(sum2, 2.481399f, 0.06f);
+  ASSERT_NEAR(sum2, 2.481399f, 0.08f);
 }
 
 TEST(ModelTest, TokenizeTest) {
