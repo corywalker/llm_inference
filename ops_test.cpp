@@ -77,3 +77,25 @@ TEST(OpsTest, Scale) {
   EXPECT_NEAR(t[0][1][0], 6.0f, 1e-6);
   EXPECT_NEAR(t[0][1][1], 8.0f, 1e-6);
 }
+
+TEST(OpsTest, MatVecMulFP16) {
+  size_t n_rows = 2;
+  size_t n_cols = 4;
+  std::vector<float> o(n_rows);
+  std::vector<uint16_t> w(n_rows * n_cols);
+
+  // Weights: {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}
+  // 1.0 = 0x3c00, 2.0 = 0x4000, 3.0 = 0x4200, 4.0 = 0x4400
+  // 5.0 = 0x4500, 6.0 = 0x4600, 7.0 = 0x4700, 8.0 = 0x4800
+  w = {0x3c00, 0x4000, 0x4200, 0x4400, 0x4500, 0x4600, 0x4700, 0x4800};
+
+  std::vector<float> x = {0.5f, 0.5f, 0.5f, 0.5f};
+
+  // Row 0: 1*0.5 + 2*0.5 + 3*0.5 + 4*0.5 = 0.5(10) = 5.0
+  // Row 1: 5*0.5 + 6*0.5 + 7*0.5 + 8*0.5 = 0.5(26) = 13.0
+
+  mat_vec_mul(o, w, x, n_rows, n_cols);
+
+  EXPECT_NEAR(o[0], 5.0f, 1e-3);
+  EXPECT_NEAR(o[1], 13.0f, 1e-3);
+}

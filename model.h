@@ -122,7 +122,7 @@ class Model {
   TensorInfo* output_norm_weight_;
   GGUFFile& gguf_file_;
   KVCache kv_cache_;
-  tensor_1 token_embd_weight_f32_;
+  std::vector<uint16_t> token_embd_weight_f16_;
 
   std::map<std::string, int> token_to_id;
   std::vector<std::string> id_to_token;

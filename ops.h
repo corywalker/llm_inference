@@ -10,8 +10,13 @@ struct TensorInfo;
 class GGUFFile;
 
 void rms_norm(std::vector<float>& o, const std::vector<float>& x, double eps);
+// Basic Matrix-Vector Multiplication (F32)
 void mat_vec_mul(std::vector<float>& o, const std::vector<float>& w,
                  const std::vector<float>& x);
+
+// Matrix-Vector Multiplication with FP16 weights
+void mat_vec_mul(std::vector<float>& o, const std::vector<uint16_t>& w,
+                 const std::vector<float>& x, size_t n_rows, size_t n_cols);
 void softmax(std::vector<float>& x);
 void vec_mat_mul(std::vector<float>& o, const std::vector<float>& x,
                  const std::vector<std::vector<float>>& w);

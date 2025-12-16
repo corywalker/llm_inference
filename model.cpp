@@ -18,19 +18,14 @@ Model::Model(GGUFFile& gguf_file) : gguf_file_(gguf_file) {
   load_vocabulary();
 
   if (token_embd_weight_->tensor_type == (uint32_t)GGUFTensorType::F16) {
-    LOG_VERBOSE("Pre-converting token embedding weights to F32...");
+    LOG_VERBOSE("Loading token embedding weights as F16...");
     const size_t num_elements =
         token_embd_weight_->shape[0] * token_embd_weight_->shape[1];
-    std::vector<uint16_t> token_embd_weight_f16(num_elements);
+    token_embd_weight_f16_.resize(num_elements);
     gguf_file_.read_tensor_data(*token_embd_weight_,
-                                token_embd_weight_f16.data(),
+                                token_embd_weight_f16_.data(),
                                 num_elements * sizeof(uint16_t));
-
-    token_embd_weight_f32_.resize(num_elements);
-    for (size_t i = 0; i < num_elements; ++i) {
-      token_embd_weight_f32_[i] = f16_to_f32(token_embd_weight_f16[i]);
-    }
-    LOG_VERBOSE("Conversion done.");
+    LOG_VERBOSE("Loading done.");
   }
 }
 
@@ -145,19 +140,32 @@ tensor_2 Model::embed_tokens(const std::vector<int>& tokens) {
   embeddings.reserve(tokens.size());
 
   if (token_embd_tensor.tensor_type == (uint32_t)GGUFTensorType::F16) {
-    std::vector<uint16_t> embedding_vector_f16(embedding_length);
-    size_t row_size_bytes = embedding_length * sizeof(uint16_t);
-
-    for (int token : tokens) {
-      gguf_file_.read_tensor_data_region(
-          token_embd_tensor, token * row_size_bytes,
-          embedding_vector_f16.data(), row_size_bytes);
-
-      tensor_1 embedding_vector(embedding_length);
-      for (size_t i = 0; i < embedding_length; ++i) {
-        embedding_vector[i] = f16_to_f32(embedding_vector_f16[i]);
+    // If we have loaded weights into memory, use them
+    if (!token_embd_weight_f16_.empty()) {
+      for (int token : tokens) {
+        tensor_1 embedding_vector(embedding_length);
+        size_t offset = token * embedding_length;
+        for (size_t i = 0; i < embedding_length; ++i) {
+          embedding_vector[i] = f16_to_f32(token_embd_weight_f16_[offset + i]);
+        }
+        embeddings.push_back(embedding_vector);
       }
-      embeddings.push_back(embedding_vector);
+    } else {
+      // Fallback to reading from file (should not happen if constructor passed)
+      std::vector<uint16_t> embedding_vector_f16(embedding_length);
+      size_t row_size_bytes = embedding_length * sizeof(uint16_t);
+
+      for (int token : tokens) {
+        gguf_file_.read_tensor_data_region(
+            token_embd_tensor, token * row_size_bytes,
+            embedding_vector_f16.data(), row_size_bytes);
+
+        tensor_1 embedding_vector(embedding_length);
+        for (size_t i = 0; i < embedding_length; ++i) {
+          embedding_vector[i] = f16_to_f32(embedding_vector_f16[i]);
+        }
+        embeddings.push_back(embedding_vector);
+      }
     }
   } else {
     std::cerr << "Error: embed_tokens: Unsupported token embedding "
@@ -552,8 +560,9 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
   tensor_1 logits(vocab_size);
 
-  if (!token_embd_weight_f32_.empty()) {
-    mat_vec_mul(logits, token_embd_weight_f32_, final_normalized_x);
+  if (!token_embd_weight_f16_.empty()) {
+    mat_vec_mul(logits, token_embd_weight_f16_, final_normalized_x, vocab_size,
+                embedding_length);
   } else if (token_embd_weight_tensor.tensor_type ==
              (uint32_t)GGUFTensorType::F16) {
     std::vector<uint16_t> embedding_row_f16(embedding_length);

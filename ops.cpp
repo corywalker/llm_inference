@@ -529,3 +529,110 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
 
   for (auto&& result : results) result.get();
 }
+
+// llama.cpp analogue would be ggml_vec_dot_f16 here.
+// FP16 Matrix-Vector Multiplication
+void mat_vec_mul(std::vector<float>& o, const std::vector<uint16_t>& w,
+                 const std::vector<float>& x, size_t n_rows, size_t n_cols) {
+  if (x.size() != n_cols) {
+    throw std::runtime_error("mat_vec_mul: input vector size mismatch");
+  }
+  if (w.size() != n_rows * n_cols) {
+    throw std::runtime_error("mat_vec_mul: weight matrix size mismatch");
+  }
+  o.resize(n_rows);
+
+#if defined(__aarch64__) || defined(__arm64__)
+  // 1. Convert input x (F32) to x_f16 (F16) using NEON
+  // We align to 8 elements (128-bit for FP16 is 8x16-bit)
+  std::vector<float16_t> x_f16(n_cols);
+  size_t j = 0;
+  for (; j + 3 < n_cols; j += 4) {
+    float32x4_t f32_val = vld1q_f32(x.data() + j);
+    float16x4_t f16_val = vcvt_f16_f32(f32_val);
+    vst1_f16(reinterpret_cast<float16_t*>(x_f16.data() + j), f16_val);
+  }
+  for (; j < n_cols; ++j) {
+    x_f16[j] = static_cast<float16_t>(x[j]);
+  }
+
+  auto compute_range = [&](size_t start_row, size_t end_row) {
+    for (size_t i = start_row; i < end_row; ++i) {
+      const float16_t* w_ptr =
+          reinterpret_cast<const float16_t*>(w.data() + i * n_cols);
+      const float16_t* x_ptr = x_f16.data();
+
+      // Accumulators
+      float16x8_t sum_vec0 = vdupq_n_f16(0.0f);
+      float16x8_t sum_vec1 = vdupq_n_f16(0.0f);
+      float16x8_t sum_vec2 = vdupq_n_f16(0.0f);
+      float16x8_t sum_vec3 = vdupq_n_f16(0.0f);
+
+      size_t k = 0;
+      // Unroll 4x (32 elements per loop)
+      for (; k + 31 < n_cols; k += 32) {
+        float16x8_t w0 = vld1q_f16(w_ptr + k);
+        float16x8_t x0 = vld1q_f16(x_ptr + k);
+        sum_vec0 = vfmaq_f16(sum_vec0, w0, x0);
+
+        float16x8_t w1 = vld1q_f16(w_ptr + k + 8);
+        float16x8_t x1 = vld1q_f16(x_ptr + k + 8);
+        sum_vec1 = vfmaq_f16(sum_vec1, w1, x1);
+
+        float16x8_t w2 = vld1q_f16(w_ptr + k + 16);
+        float16x8_t x2 = vld1q_f16(x_ptr + k + 16);
+        sum_vec2 = vfmaq_f16(sum_vec2, w2, x2);
+
+        float16x8_t w3 = vld1q_f16(w_ptr + k + 24);
+        float16x8_t x3 = vld1q_f16(x_ptr + k + 24);
+        sum_vec3 = vfmaq_f16(sum_vec3, w3, x3);
+      }
+
+      // Reduce accumulators
+      sum_vec0 = vaddq_f16(sum_vec0, sum_vec1);
+      sum_vec2 = vaddq_f16(sum_vec2, sum_vec3);
+      sum_vec0 = vaddq_f16(sum_vec0, sum_vec2);
+
+      // Handle remaining blocks of 8
+      for (; k + 7 < n_cols; k += 8) {
+        float16x8_t w_val = vld1q_f16(w_ptr + k);
+        float16x8_t x_val = vld1q_f16(x_ptr + k);
+        sum_vec0 = vfmaq_f16(sum_vec0, w_val, x_val);
+      }
+
+      float result = vaddvq_f32(vcvt_f32_f16(
+          vadd_f16(vget_low_f16(sum_vec0), vget_high_f16(sum_vec0))));
+
+      // Handle remainders (scalar)
+      for (; k < n_cols; ++k) {
+        result += (float)w_ptr[k] * (float)x_ptr[k];
+      }
+      o[i] = result;
+    }
+  };
+#else
+  auto compute_range = [&](size_t start_row, size_t end_row) {
+    for (size_t i = start_row; i < end_row; ++i) {
+      float sum = 0.0f;
+      for (size_t j = 0; j < n_cols; ++j) {
+        float w_val = f16_to_f32(w[i * n_cols + j]);
+        sum += w_val * x[j];
+      }
+      o[i] = sum;
+    }
+  };
+#endif
+
+  std::vector<std::future<void>> results;
+  size_t num_threads = g_n_threads;
+  size_t chunk_size = (n_rows + num_threads - 1) / num_threads;
+
+  for (size_t i = 0; i < num_threads; ++i) {
+    size_t start = i * chunk_size;
+    size_t end = std::min(start + chunk_size, n_rows);
+    if (start >= end) break;
+    results.emplace_back(pool->enqueue(compute_range, start, end));
+  }
+
+  for (auto&& result : results) result.get();
+}
