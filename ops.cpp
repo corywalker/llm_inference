@@ -241,6 +241,9 @@ void quantize_row_q8_0(const std::vector<float>& x, std::vector<BlockQ8_0>& y,
 
 // Quantized matrix-vector multiplication for Q4_0 weights
 // Reference: llama.cpp ggml_vec_dot_q4_0_q8_0
+// https://github.com/ggml-org/llama.cpp/blob/2aa45ef9e31069ea0a7d0fef7ce858facdf25218/ggml/src/ggml-cpu/arch/arm/quants.c#L140
+// Note that ggml_gemv_q4_0_4x4_q8_0 would be used instead of this if repacking
+// is enabled.
 void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
                       const GGUFFile& gguf_file, const std::vector<float>& x) {
   // Matrix dimensions: w_tensor is [rows x cols] in Q4_0 format
@@ -270,7 +273,9 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
   auto compute_range = [&](size_t start_row, size_t end_row) {
 #if defined(__aarch64__) || defined(__arm64__)
     for (size_t row = start_row; row < end_row; ++row) {
-      float sum_f = 0.0f;
+      float32x4_t sum_v0 = vdupq_n_f32(0.0f);
+      float32x4_t sum_v1 = vdupq_n_f32(0.0f);
+      float sum_remaining = 0.0f;
 
       const BlockQ8_0* x_blocks = x_q8_0.data();
       const uint8_t* row_w_ptr =
@@ -280,52 +285,99 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
       const int8x16_t v_8 = vdupq_n_s8(8);
 
       size_t block_idx = 0;
+
+      // Main loop unrolled 2x
+      for (; block_idx + 1 < blocks_per_row; block_idx += 2) {
+        const uint8_t* block_ptr_0 = row_w_ptr + block_idx * bytes_per_block;
+        const uint8_t* block_ptr_1 =
+            row_w_ptr + (block_idx + 1) * bytes_per_block;
+
+        // --- 4-bit -> 8-bit conversion ---
+        const uint8_t* w_quants_ptr_0 = block_ptr_0 + sizeof(uint16_t);
+        const uint8_t* w_quants_ptr_1 = block_ptr_1 + sizeof(uint16_t);
+
+        uint8x16_t v_q4_0 = vld1q_u8(w_quants_ptr_0);
+        uint8x16_t v_q4_1 = vld1q_u8(w_quants_ptr_1);
+
+        int8x16_t v_w_lo_0 =
+            vsubq_s8(vreinterpretq_s8_u8(vandq_u8(v_q4_0, mask_low)), v_8);
+        int8x16_t v_w_hi_0 =
+            vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8(v_q4_0, 4)), v_8);
+
+        int8x16_t v_w_lo_1 =
+            vsubq_s8(vreinterpretq_s8_u8(vandq_u8(v_q4_1, mask_low)), v_8);
+        int8x16_t v_w_hi_1 =
+            vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8(v_q4_1, 4)), v_8);
+
+        // --- Load scales ---
+        const uint16_t* f16_scale_ptr_0 =
+            reinterpret_cast<const uint16_t*>(block_ptr_0);
+        const uint16_t* f16_scale_ptr_1 =
+            reinterpret_cast<const uint16_t*>(block_ptr_1);
+
+        float w_scale_0 = f16_to_f32(*f16_scale_ptr_0);
+        float w_scale_1 = f16_to_f32(*f16_scale_ptr_1);
+
+        float x_scale_0 = x_blocks[block_idx].d;
+        float x_scale_1 = x_blocks[block_idx + 1].d;
+
+        float combined_scale_0 = w_scale_0 * x_scale_0;
+        float combined_scale_1 = w_scale_1 * x_scale_1;
+
+        // --- Load x ---
+        const int8_t* x_quants_ptr_0 = x_blocks[block_idx].qs;
+        const int8_t* x_quants_ptr_1 = x_blocks[block_idx + 1].qs;
+
+        int8x16_t v_x_lo_0 = vld1q_s8(x_quants_ptr_0);
+        int8x16_t v_x_hi_0 = vld1q_s8(x_quants_ptr_0 + 16);
+
+        int8x16_t v_x_lo_1 = vld1q_s8(x_quants_ptr_1);
+        int8x16_t v_x_hi_1 = vld1q_s8(x_quants_ptr_1 + 16);
+
+        // --- Dot products ---
+        int32x4_t dot_0 = vdupq_n_s32(0);
+        dot_0 = vdotq_s32(dot_0, v_w_lo_0, v_x_lo_0);
+        dot_0 = vdotq_s32(dot_0, v_w_hi_0, v_x_hi_0);
+
+        sum_v0 = vmlaq_n_f32(sum_v0, vcvtq_f32_s32(dot_0), combined_scale_0);
+
+        int32x4_t dot_1 = vdupq_n_s32(0);
+        dot_1 = vdotq_s32(dot_1, v_w_lo_1, v_x_lo_1);
+        dot_1 = vdotq_s32(dot_1, v_w_hi_1, v_x_hi_1);
+
+        sum_v1 = vmlaq_n_f32(sum_v1, vcvtq_f32_s32(dot_1), combined_scale_1);
+      }
+
+      // Remainder loop
       for (; block_idx < blocks_per_row; ++block_idx) {
         const uint8_t* block_ptr = row_w_ptr + block_idx * bytes_per_block;
 
-        // Q4_0 scale
         const uint16_t* f16_scale_ptr =
             reinterpret_cast<const uint16_t*>(block_ptr);
         float w_scale = f16_to_f32(*f16_scale_ptr);
-
-        // Q8_0 scale
         float x_scale = x_blocks[block_idx].d;
-
-        // Combined scale
         float combined_scale = w_scale * x_scale;
 
-        // Q4_0 quants (16 bytes)
         const uint8_t* w_quants_ptr = block_ptr + sizeof(uint16_t);
         uint8x16_t v_q4 = vld1q_u8(w_quants_ptr);
-
-        // Expand Q4_0 to int8 (low and high nibbles) and subtract 8
-        // Low nibbles correspond to first 16 elements
         int8x16_t v_w_lo =
             vsubq_s8(vreinterpretq_s8_u8(vandq_u8(v_q4, mask_low)), v_8);
-        // High nibbles correspond to next 16 elements
         int8x16_t v_w_hi =
             vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8(v_q4, 4)), v_8);
 
-        // Q8_0 quants (32 bytes)
         const int8_t* x_quants_ptr = x_blocks[block_idx].qs;
         int8x16_t v_x_lo = vld1q_s8(x_quants_ptr);
         int8x16_t v_x_hi = vld1q_s8(x_quants_ptr + 16);
-
-        // Dot product
-        // Sum into temporary accumulator to apply scale later?
-        // Ideally we want to accumulate as much as possible in int32 before
-        // converting to float. But scales change every block. So we must
-        // accumulate in float.
 
         int32x4_t dot = vdupq_n_s32(0);
         dot = vdotq_s32(dot, v_w_lo, v_x_lo);
         dot = vdotq_s32(dot, v_w_hi, v_x_hi);
 
         int32_t scalar_dot = vaddvq_s32(dot);
-        sum_f += scalar_dot * combined_scale;
+        sum_remaining += scalar_dot * combined_scale;
       }
 
-      o[row] = sum_f;
+      o[row] = vaddvq_f32(sum_v0) + vaddvq_f32(sum_v1) + sum_remaining;
     }
 #elif defined(__x86_64__)
     // Process each output row
