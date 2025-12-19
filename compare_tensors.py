@@ -27,10 +27,9 @@ def parse_file(filepath):
     # Ensure there is at least one digit
     sum_pattern = re.compile(r'^\s+sum\s+=\s+([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)')
     
-    # Matches "attn_norm-0 = ..." or "attn_norm-0 = {..."
-    # We assume the name is at the start of the line (after potential whitespace) up to " ="
-    # In the example: "attn_norm-0 = ..."
-    name_pattern = re.compile(r'^\s*([a-zA-Z0-9_\.-]+)\s+=')
+    # Matches "attn_norm-0 = ..." or "Qcur-0 (reshaped) = ..." 
+    # Capture everything up to " =" to distinguish reshaped versions.
+    name_pattern = re.compile(r'^\s*([^=]+?)\s+=')
     
     i = 0
     while i < len(lines):
