@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
       cxxopts::value<std::string>()->default_value(
           "One sentence fact about silicon"))(
       "n,predict", "Number of tokens to predict",
-      cxxopts::value<int>()->default_value("100"))(
+      cxxopts::value<int>()->default_value("200"))(
       "t,threads", "Number of threads to use",
       cxxopts::value<int>()->default_value(std::to_string(n_threads)))(
       "v,verbose", "Verbose output",
