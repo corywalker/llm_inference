@@ -9,6 +9,7 @@ This project is a C++ implementation for running large language model inference 
 - **Q4_0 quantization only**.
 - **CPU only** - optimized for x86 and Apple Silicon.
 - **Simple architecture** - no computation graph, sequential execution.
+- **No repacking** -- no repacking for simplicity.
 - **Greedy sampling**.
 
 ## Tested Models
