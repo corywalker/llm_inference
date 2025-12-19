@@ -4,7 +4,12 @@ on: [push]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # 'macos-latest' currently uses macOS 14 on Apple Silicon (M1)
+        os: [ubuntu-latest, macos-latest]
     steps:
     - uses: actions/checkout@v4
     - name: Run tests
