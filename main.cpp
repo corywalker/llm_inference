@@ -168,10 +168,13 @@ int main(int argc, char** argv) {
       std::cout.flush();
 
       num_generated_tokens++;
-      tokens.push_back(next_token);
-      logits_vectors = model.forward(tokens, pos);
-      pos++;
-      tokens.clear();
+
+      if (i < n_predict - 1) {
+        tokens.push_back(next_token);
+        logits_vectors = model.forward(tokens, pos);
+        pos++;
+        tokens.clear();
+      }
     }
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end_time - start_time;
