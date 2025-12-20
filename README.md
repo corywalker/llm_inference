@@ -68,11 +68,9 @@ Okay, let's break down quantum computing – it's a fascinating and incredibly c
 
 **What is it?**
 
-**1.  It's not just about bits and bytes, it's about quantum mechanics.**
+**1.  The Basics:  Classical computers are like regular, using bits – 0s and 1s – they store information as a sequence of bits, like a digital, like
 
-Traditional computers use bits, which are like a single, 0 or 1,
-
-Generated 100 tokens in 10.9122 s (9.16401 tok/s)
+Generated 100 tokens in 3.17207 s (31.5251 tok/s)
 ```
 
 ### Running Tests
