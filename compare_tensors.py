@@ -224,16 +224,27 @@ def main():
     plt.savefig(out_png)
     print(f"Plot saved to {out_png}")
 
+    # Print diffs for the first 20 or so matching tensors
+    print("\nFirst 20 Tensor Comparisons:")
+    print(f"{'Index':<6} {'Tensor Name':<40} {'Sum Diff':<15} {'Weight MSE':<15}")
+    print("-" * 80)
+    for r in results[:20]:
+        print(f"{r['idx']:<6} {r['name']:<40} {r['sum_diff']:<15.6e} {r['weight_mse']:<15.6e}")
+
     # Print top top deviations
     print("\nTop 5 Sum Deviations:")
     sorted_by_sum = sorted(results, key=lambda x: x['sum_diff'], reverse=True)
     for r in sorted_by_sum[:5]:
-        print(f"  {r['name']} (idx {r['idx']}): {r['sum_diff']}")
+        print(f"  {r['name']} (idx {r['idx']}): {r['sum_diff']:.6e}")
 
     print("\nTop 5 Weight MSEs:")
     sorted_by_mse = sorted(results, key=lambda x: x['weight_mse'], reverse=True)
     for r in sorted_by_mse[:5]:
-        print(f"  {r['name']} (idx {r['idx']}): {r['weight_mse']}")
+        print(f"  {r['name']} (idx {r['idx']}): {r['weight_mse']:.6e}")
+
+    # Overall score
+    avg_mse = sum(r['weight_mse'] for r in results) / len(results)
+    print(f"\nOVERALL AVG MSE: {avg_mse:.6e}")
 
 if __name__ == "__main__":
     main()
