@@ -103,6 +103,14 @@ void scale(tensor_3& tensor, float scale_factor) {
   }
 }
 
+static inline int nearest_int(float fval) {
+  assert(std::abs(fval) <= 4194303.f);
+  float val = fval + 12582912.f;
+  int i;
+  memcpy(&i, &val, sizeof(int));
+  return (i & 0x007fffff) - 0x00400000;
+}
+
 // Reference: llama.cpp/ggml/src/ggml-quants.c : quantize_row_q8_0
 void quantize_row_q8_0(const std::vector<float>& x, std::vector<BlockQ8_0>& y,
                        size_t size) {
@@ -120,11 +128,11 @@ void quantize_row_q8_0(const std::vector<float>& x, std::vector<BlockQ8_0>& y,
     const float d = amax / 127.0f;
     const float id = d ? 1.0f / d : 0.0f;
 
-    y[i].d = d;
+    y[i].d = f32_to_f16(d);
 
     for (int j = 0; j < 32; j++) {
       const float x0 = x[i * 32 + j] * id;
-      y[i].qs[j] = std::round(x0);
+      y[i].qs[j] = nearest_int(x0);
     }
   }
 }
@@ -211,8 +219,8 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
         float w_scale_0 = f16_to_f32(*f16_scale_ptr_0);
         float w_scale_1 = f16_to_f32(*f16_scale_ptr_1);
 
-        float x_scale_0 = x_blocks[block_idx].d;
-        float x_scale_1 = x_blocks[block_idx + 1].d;
+        float x_scale_0 = f16_to_f32(x_blocks[block_idx].d);
+        float x_scale_1 = f16_to_f32(x_blocks[block_idx + 1].d);
 
         float combined_scale_0 = w_scale_0 * x_scale_0;
         float combined_scale_1 = w_scale_1 * x_scale_1;
@@ -248,7 +256,7 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
         const uint16_t* f16_scale_ptr =
             reinterpret_cast<const uint16_t*>(block_ptr);
         float w_scale = f16_to_f32(*f16_scale_ptr);
-        float x_scale = x_blocks[block_idx].d;
+        float x_scale = f16_to_f32(x_blocks[block_idx].d);
         float combined_scale = w_scale * x_scale;
 
         const uint8_t* w_quants_ptr = block_ptr + sizeof(uint16_t);

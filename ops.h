@@ -33,7 +33,7 @@ void scale(tensor_3& tensor, float scale_factor);
 
 // Q8_0 quantization block for activations
 struct BlockQ8_0 {
-  float d;        // scaling factor
+  uint16_t d;     // scaling factor (fp16)
   int8_t qs[32];  // quantized values
 };
 
