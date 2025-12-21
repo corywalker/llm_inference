@@ -8,20 +8,25 @@
       "program": "${workspaceFolder}/bazel-bin/llm_inference",
       "args": [
         "--model",
-        "~/gemma-3-1b-it-qat-q4_0-gguf/gemma-3-1b-it-q4_0.gguf"
+        "${config:modelPath}"
       ],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],
       "externalConsole": false,
-      "MIMode": "gdb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
-        }
-      ],
+      "linux": {
+        "MIMode": "gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ]
+      },
+      "osx": {
+        "MIMode": "lldb"
+      },
       "preLaunchTask": "bazel-build-debug"
     },
     {
@@ -31,7 +36,7 @@
       "program": "${workspaceFolder}/third_party/llama.cpp/build_dbg/bin/llama-eval-callback",
       "args": [
         "-m",
-        "~/gemma-3-1b-it-qat-q4_0-gguf/gemma-3-1b-it-q4_0.gguf",
+        "${config:modelPath}",
         "-p",
         "Hello",
         "-s",
@@ -46,21 +51,26 @@
       "cwd": "${workspaceFolder}/third_party/llama.cpp",
       "environment": [],
       "externalConsole": false,
-      "MIMode": "gdb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
-        },
-        {
-          "description": "Set Disassembly Flavor to Intel",
-          "text": "-gdb-set disassembly-flavor intel",
-          "ignoreFailures": true
-        }
-      ],
-      "preLaunchTask": "C/C++: Build llama.cpp eval-callback",
-      "miDebuggerPath": "/usr/bin/gdb"
+      "linux": {
+        "MIMode": "gdb",
+        "miDebuggerPath": "/usr/bin/gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          },
+          {
+            "description": "Set Disassembly Flavor to Intel",
+            "text": "-gdb-set disassembly-flavor intel",
+            "ignoreFailures": true
+          }
+        ]
+      },
+      "osx": {
+        "MIMode": "lldb"
+      },
+      "preLaunchTask": "C/C++: Build llama.cpp eval-callback"
     }
   ]
 }

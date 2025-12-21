@@ -11,3 +11,4 @@ mac_profile.trace
 run_llamacpp.sh
 tmp
 third_party/llama.cpp
+.vscode/settings.json
