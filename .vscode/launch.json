@@ -8,7 +8,13 @@
       "program": "${workspaceFolder}/bazel-bin/llm_inference",
       "args": [
         "--model",
-        "${config:modelPath}"
+        "${config:modelPath}",
+        "-p",
+        "Hello",
+        "-v",
+        "-n",
+        "100",
+        "--no-cnv",
       ],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
@@ -27,7 +33,9 @@
       "osx": {
         "MIMode": "lldb",
         "sourceFileMap": {
-          "${workspaceFolder}/bazel-llm_inference": "${workspaceFolder}"
+          // "${workspaceFolder}/bazel-llm_inference": "${workspaceFolder}"
+          // This is updated to `bazel info execution_root`. Not sure how to automate it, but just update this occasionally when necessary.
+          "/private/var/tmp/_bazel_corywalker/8ad1cd4b5e88c182c4eaa902c07cde58/execroot/_main": "${workspaceFolder}"
         }
       },
       "preLaunchTask": "bazel-build-debug"
