@@ -131,7 +131,10 @@ void quantize_row_q8_0(const std::vector<float>& x, std::vector<BlockQ8_0>& y,
 
 // Quantized matrix-vector multiplication for Q4_0 weights
 // Reference: llama.cpp ggml_vec_dot_q4_0_q8_0
+// ARM:
 // https://github.com/ggml-org/llama.cpp/blob/2aa45ef9e31069ea0a7d0fef7ce858facdf25218/ggml/src/ggml-cpu/arch/arm/quants.c#L140
+// x86:
+// https://github.com/ggml-org/llama.cpp/blob/ddcb75dd8ac42dc23eb84f13bb17670fe9f2d49b/ggml/src/ggml-cpu/arch/x86/quants.c#L543
 // Note that ggml_gemv_q4_0_4x4_q8_0 would be used instead of this if repacking
 // is enabled.
 void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
