@@ -561,8 +561,8 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
   tensor_1 logits(vocab_size);
 
   if (!token_embd_weight_f16_.empty()) {
-    mat_vec_mul(logits, token_embd_weight_f16_, final_normalized_x, vocab_size,
-                embedding_length);
+    mat_vec_mul_fp16(logits, token_embd_weight_f16_, final_normalized_x,
+                     vocab_size, embedding_length);
   } else if (token_embd_weight_tensor.tensor_type ==
              (uint32_t)GGUFTensorType::F16) {
     std::vector<uint16_t> embedding_row_f16(embedding_length);

@@ -26,15 +26,6 @@ TEST(OpsTest, RmsNorm) {
   }
 }
 
-TEST(OpsTest, MatVecMul) {
-  std::vector<float> o(2);
-  std::vector<float> w = {1.0, 2.0, 3.0, 4.0};
-  std::vector<float> x = {5.0, 6.0};
-  mat_vec_mul(o, w, x);
-  EXPECT_NEAR(o[0], 1.0 * 5.0 + 2.0 * 6.0, 1e-6);
-  EXPECT_NEAR(o[1], 3.0 * 5.0 + 4.0 * 6.0, 1e-6);
-}
-
 TEST(OpsTest, Softmax) {
   std::vector<float> x = {1.0, 2.0, 3.0, 4.0};
   softmax(x);
@@ -94,7 +85,7 @@ TEST(OpsTest, MatVecMulFP16) {
   // Row 0: 1*0.5 + 2*0.5 + 3*0.5 + 4*0.5 = 0.5(10) = 5.0
   // Row 1: 5*0.5 + 6*0.5 + 7*0.5 + 8*0.5 = 0.5(26) = 13.0
 
-  mat_vec_mul(o, w, x, n_rows, n_cols);
+  mat_vec_mul_fp16(o, w, x, n_rows, n_cols);
 
   EXPECT_NEAR(o[0], 5.0f, 1e-3);
   EXPECT_NEAR(o[1], 13.0f, 1e-3);

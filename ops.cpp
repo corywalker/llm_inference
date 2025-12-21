@@ -41,116 +41,6 @@ void rms_norm(std::vector<float>& o, const std::vector<float>& x, double eps) {
   }
 }
 
-void mat_vec_mul(std::vector<float>& o, const std::vector<float>& w,
-                 const std::vector<float>& x) {
-  size_t C = x.size();
-  if (C == 0) {
-    o.clear();
-    return;
-  }
-  if (w.size() % C != 0) {
-    throw std::runtime_error("mat_vec_mul: dimensions mismatch");
-  }
-  size_t R = w.size() / C;
-  o.resize(R);
-
-  auto compute_range = [&](size_t start_row, size_t end_row) {
-#if defined(__x86_64__)
-    for (size_t i = start_row; i < end_row; ++i) {
-      const float* w_ptr = w.data() + i * C;
-      const float* x_ptr = x.data();
-      __m256 sum_vec = _mm256_setzero_ps();
-      size_t j = 0;
-      for (; j + 7 < C; j += 8) {
-        __m256 w_vec = _mm256_loadu_ps(w_ptr + j);
-        __m256 x_vec = _mm256_loadu_ps(x_ptr + j);
-        sum_vec = _mm256_fmadd_ps(w_vec, x_vec, sum_vec);
-      }
-
-      float sum_arr[8];
-      _mm256_storeu_ps(sum_arr, sum_vec);
-      float result = sum_arr[0] + sum_arr[1] + sum_arr[2] + sum_arr[3] +
-                     sum_arr[4] + sum_arr[5] + sum_arr[6] + sum_arr[7];
-
-      for (; j < C; ++j) {
-        result += w_ptr[j] * x_ptr[j];
-      }
-      o[i] = result;
-    }
-#elif defined(__aarch64__) || defined(__arm64__)
-    for (size_t i = start_row; i < end_row; ++i) {
-      const float* w_ptr = w.data() + i * C;
-      const float* x_ptr = x.data();
-
-      // Use 4 accumulators to break dependency chains
-      float32x4_t sum_vec0 = vdupq_n_f32(0.0f);
-      float32x4_t sum_vec1 = vdupq_n_f32(0.0f);
-      float32x4_t sum_vec2 = vdupq_n_f32(0.0f);
-      float32x4_t sum_vec3 = vdupq_n_f32(0.0f);
-
-      size_t j = 0;
-      // Process 16 floats per iteration (4x unroll)
-      for (; j + 15 < C; j += 16) {
-        float32x4_t w_vec0 = vld1q_f32(w_ptr + j);
-        float32x4_t x_vec0 = vld1q_f32(x_ptr + j);
-        sum_vec0 = vfmaq_f32(sum_vec0, w_vec0, x_vec0);
-
-        float32x4_t w_vec1 = vld1q_f32(w_ptr + j + 4);
-        float32x4_t x_vec1 = vld1q_f32(x_ptr + j + 4);
-        sum_vec1 = vfmaq_f32(sum_vec1, w_vec1, x_vec1);
-
-        float32x4_t w_vec2 = vld1q_f32(w_ptr + j + 8);
-        float32x4_t x_vec2 = vld1q_f32(x_ptr + j + 8);
-        sum_vec2 = vfmaq_f32(sum_vec2, w_vec2, x_vec2);
-
-        float32x4_t w_vec3 = vld1q_f32(w_ptr + j + 12);
-        float32x4_t x_vec3 = vld1q_f32(x_ptr + j + 12);
-        sum_vec3 = vfmaq_f32(sum_vec3, w_vec3, x_vec3);
-      }
-
-      // Combine accumulators
-      sum_vec0 = vaddq_f32(sum_vec0, sum_vec1);
-      sum_vec2 = vaddq_f32(sum_vec2, sum_vec3);
-      sum_vec0 = vaddq_f32(sum_vec0, sum_vec2);
-
-      // Handle remaining 4-wide chunks
-      for (; j + 3 < C; j += 4) {
-        float32x4_t w_vec = vld1q_f32(w_ptr + j);
-        float32x4_t x_vec = vld1q_f32(x_ptr + j);
-        sum_vec0 = vfmaq_f32(sum_vec0, w_vec, x_vec);
-      }
-
-      float result = vaddvq_f32(sum_vec0);
-
-      for (; j < C; ++j) {
-        result += w_ptr[j] * x_ptr[j];
-      }
-      o[i] = result;
-    }
-#else
-    for (size_t i = start_row; i < end_row; ++i) {
-      o[i] = 0.0f;
-      for (size_t j = 0; j < C; ++j) {
-        o[i] += w[i * C + j] * x[j];
-      }
-    }
-#endif
-  };
-
-  std::vector<std::future<void>> results;
-  size_t num_threads = g_n_threads;
-  size_t chunk_size = (R + num_threads - 1) / num_threads;
-
-  for (size_t i = 0; i < num_threads; ++i) {
-    size_t start = i * chunk_size;
-    size_t end = std::min(start + chunk_size, R);
-    if (start >= end) break;
-    results.emplace_back(pool->enqueue(compute_range, start, end));
-  }
-
-  for (auto&& result : results) result.get();
-}
-
 void softmax(std::vector<float>& x) {
   float max_val = x[0];
   for (float val : x) {
@@ -532,13 +422,14 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
 
 // llama.cpp analogue would be ggml_vec_dot_f16 here.
 // FP16 Matrix-Vector Multiplication
-void mat_vec_mul(std::vector<float>& o, const std::vector<uint16_t>& w,
-                 const std::vector<float>& x, size_t n_rows, size_t n_cols) {
+void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
+                      const std::vector<float>& x, size_t n_rows,
+                      size_t n_cols) {
   if (x.size() != n_cols) {
-    throw std::runtime_error("mat_vec_mul: input vector size mismatch");
+    throw std::runtime_error("mat_vec_mul_fp16: input vector size mismatch");
   }
   if (w.size() != n_rows * n_cols) {
-    throw std::runtime_error("mat_vec_mul: weight matrix size mismatch");
+    throw std::runtime_error("mat_vec_mul_fp16: weight matrix size mismatch");
   }
   o.resize(n_rows);
 
