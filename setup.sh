@@ -15,6 +15,8 @@ sudo mv bazel.gpg /etc/apt/trusted.gpg.d/ && \
 echo "deb [arch=amd64] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list && \
 sudo apt-get update && sudo apt-get install -y bazel
 
+sudo apt-get install -y linux-tools-common linux-tools-generic
+
 npm install -g @google/gemini-cli
 
 cd ~
@@ -24,3 +26,5 @@ git clone https://github.com/antirez/gguf-tools.git
 cd gguf-tools
 make
 sudo cp gguf-tools /usr/local/bin/
+
+./setup_llama_cpp.sh

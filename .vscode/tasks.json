@@ -14,5 +14,19 @@
         "cwd": "${workspaceFolder}"
       }
     },
+    {
+      "label": "C/C++: Build llama.cpp eval-callback",
+      "type": "shell",
+      "command": "cmake --build build_dbg --config Debug --target llama-eval-callback",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/third_party/llama.cpp"
+      },
+    }
   ]
 }

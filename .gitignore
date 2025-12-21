@@ -10,3 +10,4 @@ mac_profile.trace
 .DS_Store
 run_llamacpp.sh
 tmp
+third_party/llama.cpp

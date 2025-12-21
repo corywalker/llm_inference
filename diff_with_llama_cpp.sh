@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# LLAMA_EVAL_CALLBACK_BIN is https://github.com/ggml-org/llama.cpp/blob/master/examples/eval-callback/README.md
-if [ -z "$1" ] || [ -z "$2" ]; then
-    echo "Usage: $0 <MODEL_LOCATION> <LLAMA_EVAL_CALLBACK_BINARY_PATH>"
+if [ -z "$1" ]; then
+    echo "Usage: $0 <MODEL_LOCATION>"
     exit 1
 fi
 
 MODEL_LOC="$1"
-LLAMA_EVAL_CALLBACK_BIN="$2"
+# LLAMA_EVAL_CALLBACK_BIN is https://github.com/ggml-org/llama.cpp/blob/master/examples/eval-callback/README.md
+LLAMA_EVAL_CALLBACK_BIN="./third_party/llama.cpp/build/bin/llama-eval-callback"
 
 COMMON_ARGS=( -m "$MODEL_LOC" -p "Hello" -v -n 1 )
 
