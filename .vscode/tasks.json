@@ -5,6 +5,9 @@
       "label": "bazel-build-debug",
       "type": "shell",
       "command": "bazel build //:llm_inference -c dbg",
+      "osx": {
+        "command": "bazel build //:llm_inference -c dbg --apple_generate_dsym --spawn_strategy=local"
+      },
       "group": {
         "kind": "build",
         "isDefault": true

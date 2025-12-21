@@ -25,7 +25,10 @@
         ]
       },
       "osx": {
-        "MIMode": "lldb"
+        "MIMode": "lldb",
+        "sourceFileMap": {
+          "${workspaceFolder}/bazel-llm_inference": "${workspaceFolder}"
+        }
       },
       "preLaunchTask": "bazel-build-debug"
     },
