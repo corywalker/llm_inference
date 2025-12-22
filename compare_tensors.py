@@ -7,109 +7,62 @@ import os
 def parse_file(filepath):
     """
     Parses a file to extract tensor information.
-    Returns a dict mapping tensor_name -> {'sum': float, 'values': list[float]}
-    or a list of such dictionaries if order matters. 
-    Here we return a list to preserve order for plotting, 
-    but we also want to lookup by name.
-    
-    Let's return a list of dicts: {'name': str, 'sum': float, 'values': list[float], 'line_num': int}
+    Returns a list of dicts: {'name': str, 'sum': float, 'values': list[float], 'line_num': int}
     """
     tensors = []
     
+    if not os.path.exists(filepath):
+        return []
+
     with open(filepath, 'r') as f:
         lines = f.readlines()
         
     current_tensor = None
-    capture_values = False
     
     # Regex patterns
     # Matches "sum = 28.737751" or scientific notation
-    # Ensure there is at least one digit
-    sum_pattern = re.compile(r'^\s+sum\s+=\s+([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)')
+    sum_pattern = re.compile(r'^\s*sum\s+=\s+([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)')
     
     # Matches "attn_norm-0 = ..." or "Qcur-0 (reshaped) = ..." 
-    # Capture everything up to " =" to distinguish reshaped versions.
     name_pattern = re.compile(r'^\s*([^=]+?)\s+=')
     
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        
-        # Look for sum
+    for i, line in enumerate(lines):
+        # Check for sum which ends the block
         sum_match = sum_pattern.match(line)
         if sum_match:
             if current_tensor:
-                # We found a new sum, but haven't finished the previous tensor? 
-                # Actually usually formats are block based.
-                # If we encounter a sum, it's likely the start of a new tensor block description
-                # or the end of one.
-                # In the grep output: "sum = ..." comes BEFORE "attn_norm-0 = ..."
-                pass
+                current_tensor['sum'] = float(sum_match.group(1))
+                current_tensor = None
+            continue
 
-            tensor_sum = float(sum_match.group(1))
-            
-            # The next line should have the name
-            if i + 1 < len(lines):
-                name_line = lines[i+1]
-                name_match = name_pattern.match(name_line)
-                if name_match:
-                    name = name_match.group(1)
-                    current_tensor = {
-                        'name': name,
-                        'sum': tensor_sum,
-                        'values': [],
-                        'line_num': i + 1
-                    }
-                    tensors.append(current_tensor)
-                    i += 1 # Advance to name line
-                    capture_values = True
-                else:
-                    # Maybe name is on the same line? Unlikely based on grep.
-                    # Or maybe skipping some lines.
-                    pass
-        
-        elif capture_values and current_tensor:
-            # We are inside a tensor block, looking for values like "[ 0.123, ... ]"
-            # format: [      0.1653,      -0.2382, ...
-            
-            # Check if block ends
-            # If we see a new "sum =" or "name =", we stop? 
-            # Or matches "]" at start of line?
-            # The grep shows nested brackets [[ [ ... ] ]].
-            
-            # Simplest approach: extract all floats from the line
-            # If line has no floats, maybe it's just formatting. 
-            # Stop if we hit a line that looks like a new header or is empty for too long?
-            # Actually, let's just grab valid floats until we hit new metadata.
-            
-            if sum_pattern.match(line) or name_pattern.match(line):
-                # Oops, we ran into the next block without closing the previous one?
-                # This should be handled by the main loop anyway, but we need to reset flag.
-                capture_values = False
-                # Don't increment i here, let the loop re-process this line as a start
+        # Check for name
+        name_match = name_pattern.match(line)
+        if name_match:
+            name = name_match.group(1).strip()
+            if name == "sum": # Safety check
                 continue
-                
-            vals = re.findall(r'([-+]?\d*\.\d+|[-+]?\d+)', line)
-            # Filter out timestamps or line numbers if any (unlikely in this format)
-            # Only take things that look like tensor values.
-            # The regex finds floats.
+
+            current_tensor = {
+                'name': name,
+                'sum': 0.0,
+                'values': [],
+                'line_num': i + 1
+            }
+            tensors.append(current_tensor)
+            continue
             
-            valid_vals = []
+        if current_tensor:
+            # Extract values
+            # Regex for floats including scientific notation
+            vals = re.findall(r'([-+]?(?:\d+\.\d+|\.\d+|\d+)(?:[eE][-+]?\d+)?)', line)
             for v in vals:
                 try:
-                    f = float(v)
-                    # Simple heuristic: ignore integers that look like dims if they appear?
-                    # But values can be anything.
-                    valid_vals.append(f)
-                except:
+                    current_tensor['values'].append(float(v))
+                except ValueError:
                     pass
-            
-            if valid_vals:
-                current_tensor['values'].extend(valid_vals)
                 
-        i += 1
-        
     return tensors
+
 
 def calculate_metrics(ref_tensor, test_tensor):
     sum_diff = abs(ref_tensor['sum'] - test_tensor['sum'])
