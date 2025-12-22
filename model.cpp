@@ -268,7 +268,8 @@ tensor_3 Model::run_norm(const tensor_3& input,
 
 // Similar to
 // https://github.com/ggml-org/llama.cpp/blob/e1f15b454fbadfddf8f1ec450bf6d390d9db7adb/src/llama-graph.cpp#L1777
-// For building the graph. For actually running the attention, the llama.cpp reference is at:
+// For building the graph. For actually running the attention, the llama.cpp
+// reference is at:
 // https://github.com/ggml-org/llama.cpp/blob/e1f15b454fbadfddf8f1ec450bf6d390d9db7adb/ggml/src/ggml-cpu/ops.cpp#L8333
 tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
                          const TensorInfo* output_weights,
@@ -345,9 +346,8 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
       }
 
       for (uint32_t i = 0; i < n_embd_head; ++i) {
-        if (s_acc != 0.0f) {
-          concatenated_head_results[h * n_embd_head + i] = v_acc[i] / s_acc;
-        }
+        const float S_inv = s_acc == 0.0f ? 0.0f : 1.0f / s_acc;
+        concatenated_head_results[h * n_embd_head + i] = v_acc[i] * S_inv;
       }
     }
     kqv_out.push_back(concatenated_head_results);

@@ -1,1 +1,1 @@
-find . -iname '*.h' -o -iname '*.cpp' | xargs clang-format -i -style=file
+find . -path ./third_party -prune -o \( -iname '*.h' -o -iname '*.cpp' \) -print | xargs clang-format -i -style=file
