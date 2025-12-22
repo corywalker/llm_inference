@@ -266,6 +266,10 @@ tensor_3 Model::run_norm(const tensor_3& input,
   return final_outputs;
 }
 
+// Similar to
+// https://github.com/ggml-org/llama.cpp/blob/e1f15b454fbadfddf8f1ec450bf6d390d9db7adb/src/llama-graph.cpp#L1777
+// For building the graph. For actually running the attention, the llama.cpp reference is at:
+// https://github.com/ggml-org/llama.cpp/blob/e1f15b454fbadfddf8f1ec450bf6d390d9db7adb/ggml/src/ggml-cpu/ops.cpp#L8333
 tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
                          const TensorInfo* output_weights,
                          const tensor_3& q_heads, const tensor_3& k_heads,
