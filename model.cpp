@@ -441,17 +441,6 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     VERBOSE(
         print_tensor(v_reshaped, "Vcur-" + std::to_string(i) + " (reshaped)"));
 
-    // Looks mostly accurate even up to initial {Q,K,V}cur calculations, except
-    // that Q,K,V seem to have some slight differences, whereas attn_norm was
-    // exact. I've determined that the
-    // difference in value between this and llama.cpp is because llama.cpp casts
-    // the float32 attn_norm to float8 before doing the matrix multiply.
-    // Specifically, at this line:
-    // https://github.com/ggml-org/llama.cpp/blob/7e994168b1ccc12337ba8de939c4fd466107c1fb/ggml/src/ggml-cpu/repack.cpp#L1660
-    // Please see all the debugging notes at
-    // ./random_coding_practice/tmp/llama_cpp_matrix_debugging_changes.diff For
-    // now, my plan is to ignore this.
-
     // Note: run_attn still needs dequantized output_weights for now
     // TODO: Optimize run_attn to use Q4_0 directly
     tensor_2 attention_results =
