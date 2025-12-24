@@ -17,6 +17,10 @@ void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
                       const std::vector<float>& x, size_t n_rows,
                       size_t n_cols);
 
+// FP16 Vector Operations
+void vec_scale_f16(tensor_f16_1& y, float v);
+void vec_mad_f16(tensor_f16_1& y, const tensor_f16_1& x, float v);
+
 // Quantized matrix-vector multiplication: o = w_q4 * x
 // w_tensor contains Q4_0 quantized weights (stored in GGUF file)
 // x is F32 input vector

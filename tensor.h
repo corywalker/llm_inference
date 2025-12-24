@@ -14,6 +14,10 @@ typedef std::vector<float> tensor_1;
 typedef std::vector<tensor_1> tensor_2;
 typedef std::vector<tensor_2> tensor_3;
 
+typedef std::vector<uint16_t> tensor_f16_1;
+typedef std::vector<tensor_f16_1> tensor_f16_2;
+typedef std::vector<tensor_f16_2> tensor_f16_3;
+
 // Generic tensor printing function
 inline void print_tensor_generic(const tensor_1& data,
                                  std::vector<int64_t> shape,

@@ -11,8 +11,8 @@
  * @brief Represents a layer in the Key-Value cache.
  */
 struct KVCacheLayer {
-  tensor_3 k;
-  tensor_3 v;
+  tensor_f16_3 k;
+  tensor_f16_3 v;
 };
 using KVCache = std::vector<KVCacheLayer>;
 

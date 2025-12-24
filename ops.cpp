@@ -539,3 +539,20 @@ void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
 
   for (auto&& result : results) result.get();
 }
+
+void vec_scale_f16(tensor_f16_1& y, float v) {
+  for (size_t i = 0; i < y.size(); ++i) {
+    float val = f16_to_f32(y[i]);
+    y[i] = f32_to_f16(val * v);
+  }
+}
+
+void vec_mad_f16(tensor_f16_1& y, const tensor_f16_1& x, float v) {
+  // Assuming y and x have same size
+  size_t n = y.size();
+  for (size_t i = 0; i < n; ++i) {
+    float y_val = f16_to_f32(y[i]);
+    float x_val = f16_to_f32(x[i]);
+    y[i] = f32_to_f16(y_val + x_val * v);
+  }
+}

@@ -282,12 +282,35 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
   const float logit_softcap = hparams_.attn_soft_cap;
 
   // Concat k_heads and v_heads to kv_cache
+  // Convert F32 heads to F16 for storage
+  auto to_f16_3 = [](const tensor_3& src) {
+    tensor_f16_3 dst;
+    dst.reserve(src.size());
+    for (const auto& vec2 : src) {
+      tensor_f16_2 d2;
+      d2.reserve(vec2.size());
+      for (const auto& vec1 : vec2) {
+        tensor_f16_1 d1;
+        d1.reserve(vec1.size());
+        for (float v : vec1) {
+          d1.push_back(f32_to_f16(v));
+        }
+        d2.push_back(d1);
+      }
+      dst.push_back(d2);
+    }
+    return dst;
+  };
+
+  tensor_f16_3 k_heads_f16 = to_f16_3(k_heads);
+  tensor_f16_3 v_heads_f16 = to_f16_3(v_heads);
+
   if (kv_cache.k.empty()) {
-    kv_cache.k = k_heads;
-    kv_cache.v = v_heads;
+    kv_cache.k = k_heads_f16;
+    kv_cache.v = v_heads_f16;
   } else {
-    kv_cache.k.insert(kv_cache.k.end(), k_heads.begin(), k_heads.end());
-    kv_cache.v.insert(kv_cache.v.end(), v_heads.begin(), v_heads.end());
+    kv_cache.k.insert(kv_cache.k.end(), k_heads_f16.begin(), k_heads_f16.end());
+    kv_cache.v.insert(kv_cache.v.end(), v_heads_f16.begin(), v_heads_f16.end());
   }
 
   tensor_2 kqv_out;
@@ -297,7 +320,10 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
 
     for (uint32_t h = 0; h < n_head; ++h) {
       const tensor_1& q_vec = q_heads[t][h];
-      tensor_1 v_acc(n_embd_head, 0.0f);
+
+      // Use FP16 for v_acc to match llama.cpp
+      tensor_f16_1 v_acc(n_embd_head, f32_to_f16(0.0f));
+
       float s_acc = 0.0f;
       float max_score = -INFINITY;
 
@@ -313,11 +339,11 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
       }
 
       for (uint32_t t_k = 0; t_k <= pos + t; ++t_k) {
-        const tensor_1& k_vec = kv_cache.k[t_k][h_kv];
+        const tensor_f16_1& k_vec = kv_cache.k[t_k][h_kv];
 
         float score = 0.0f;
         for (uint32_t i = 0; i < n_embd_head; ++i) {
-          score += q_vec[i] * k_vec[i];
+          score += q_vec[i] * f16_to_f32(k_vec[i]);
         }
 
         if (logit_softcap > 0.0f) {
@@ -337,17 +363,21 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
         const float score_exp = expf(score - max_score);
         const float prev_score_exp = expf(prev_max_score - max_score);
 
-        const tensor_1& v_vec = kv_cache.v[t_k][h_kv];
+        const tensor_f16_1& v_vec = kv_cache.v[t_k][h_kv];
 
-        for (uint32_t i = 0; i < n_embd_head; ++i) {
-          v_acc[i] = v_acc[i] * prev_score_exp + v_vec[i] * score_exp;
-        }
+        // V = V*expf(Mold - M)
+        vec_scale_f16(v_acc, prev_score_exp);
+
+        // V += v*expf(s - M)
+        vec_mad_f16(v_acc, v_vec, score_exp);
+
         s_acc = s_acc * prev_score_exp + score_exp;
       }
 
       for (uint32_t i = 0; i < n_embd_head; ++i) {
         const float S_inv = s_acc == 0.0f ? 0.0f : 1.0f / s_acc;
-        concatenated_head_results[h * n_embd_head + i] = v_acc[i] * S_inv;
+        concatenated_head_results[h * n_embd_head + i] =
+            f16_to_f32(v_acc[i]) * S_inv;
       }
     }
     kqv_out.push_back(concatenated_head_results);
