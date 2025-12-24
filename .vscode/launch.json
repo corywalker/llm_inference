@@ -56,7 +56,9 @@
         "-n",
         "100",
         // llama-eval-callback does --no-cnv by default
-        "--no-repack"
+        "--no-repack",
+        "--threads",
+        "1"
       ],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/third_party/llama.cpp",

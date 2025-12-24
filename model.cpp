@@ -298,6 +298,7 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
     for (uint32_t h = 0; h < n_head; ++h) {
       const tensor_1& q_vec = q_heads[t][h];
       tensor_1 v_acc(n_embd_head, 0.0f);
+      printf("VKQ32_initial_value = %f\n", v_acc[0]);
       float s_acc = 0.0f;
       float max_score = -INFINITY;
 
@@ -335,19 +336,30 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
         }
 
         const float score_exp = expf(score - max_score);
+        printf("score_exp = expf(%f - %f) = %f\n", score, max_score, score_exp);
         const float prev_score_exp = expf(prev_max_score - max_score);
+        printf("prev_score_exp = expf(%f - %f) = %f\n", prev_max_score, max_score, prev_score_exp);
 
+        // Fundamental difference. Here, the value is 32-bit 6.499132.
         const tensor_1& v_vec = kv_cache.v[t_k][h_kv];
 
         for (uint32_t i = 0; i < n_embd_head; ++i) {
+          if (i == 0) {
+            printf("v_acc[0] = %f * %f + %f * %f = %f\n", v_acc[i], prev_score_exp, v_vec[i], score_exp, v_acc[i] * prev_score_exp + v_vec[i] * score_exp);
+          }
           v_acc[i] = v_acc[i] * prev_score_exp + v_vec[i] * score_exp;
+          if (i == 0) {
+            printf("VKQ32_updated1 = %f\n", v_acc[i]);
+          }
         }
         s_acc = s_acc * prev_score_exp + score_exp;
       }
 
       for (uint32_t i = 0; i < n_embd_head; ++i) {
         const float S_inv = s_acc == 0.0f ? 0.0f : 1.0f / s_acc;
+        printf("S_inv = %f, VKQ32_before = %f\n", S_inv, v_acc[i]);
         concatenated_head_results[h * n_embd_head + i] = v_acc[i] * S_inv;
+        printf("VKQ32_after = %f\n", concatenated_head_results[h * n_embd_head + i]);
       }
     }
     kqv_out.push_back(concatenated_head_results);
