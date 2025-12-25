@@ -3,3 +3,6 @@ test --enable_workspace
 
 # Apple Silicon specific settings
 build:macos_arm64 --cpu=darwin_arm64
+
+# Clang settings
+build:clang --action_env=CC=/usr/bin/clang --action_env=CXX=/usr/bin/clang++ --define=use_clang=true

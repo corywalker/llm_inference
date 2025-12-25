@@ -3,6 +3,16 @@ config_setting(
     values = {"cpu": "darwin_arm64"},
 )
 
+config_setting(
+    name = "clang_config",
+    values = {"define": "use_clang=true"},
+)
+
+config_setting(
+    name = "linux_arm64",
+    values = {"cpu": "aarch64"},
+)
+
 load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 
 refresh_compile_commands(
@@ -32,6 +42,8 @@ cc_library(
     hdrs = ["ops.h", "thread_pool.h", "tensor.h"],
     copts = select({
         "//:macos_arm64": [],
+        "//:linux_arm64": ["-march=armv8.2-a+dotprod+fp16", "-D_GLIBCXX_USE_CXX11_ABI=0"],
+        "//:clang_config": ["-march=armv8.2-a+dotprod+fp16", "-D_GLIBCXX_USE_CXX11_ABI=0"],
         "//conditions:default": ["-mavx2", "-mfma"],
     }),
     visibility = ["//:__subpackages__"],
