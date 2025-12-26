@@ -42,8 +42,8 @@ cc_library(
     hdrs = ["ops.h", "thread_pool.h", "tensor.h"],
     copts = select({
         "//:macos_arm64": [],
-        "//:linux_arm64": ["-march=armv8.2-a+dotprod+fp16", "-D_GLIBCXX_USE_CXX11_ABI=0"],
-        "//:clang_config": ["-march=armv8.2-a+dotprod+fp16", "-D_GLIBCXX_USE_CXX11_ABI=0"],
+        "//:linux_arm64": ["-march=armv8.2-a+dotprod+fp16"],
+        "//:clang_config": ["-march=armv8.2-a+dotprod+fp16"],
         "//conditions:default": ["-mavx2", "-mfma"],
     }),
     visibility = ["//:__subpackages__"],
