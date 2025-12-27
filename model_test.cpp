@@ -436,7 +436,7 @@ TEST(ModelTest, ForwardPass) {
   ASSERT_NEAR(result2[0][9], -0.454702f, 0.08f);
   float sum2 = 0.0f;
   for (auto v : result2[0]) sum2 += v;
-  ASSERT_NEAR(sum2, 2.481399f, 0.08f);
+  ASSERT_NEAR(sum2, 2.6156005859375f, 0.08f);
 }
 
 TEST(ModelTest, TokenizeTest) {

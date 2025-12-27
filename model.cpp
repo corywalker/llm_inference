@@ -416,6 +416,10 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
   // Transformer blocks
   for (size_t i = 0; i < layers_.size(); ++i) {
+    size_t swa_n_pattern = 6;
+    bool is_swa = i % swa_n_pattern < (swa_n_pattern - 1);
+    // Gemma will use a different freq_base depending on the layer.
+    float this_rope_freq_base = is_swa ? 10000 : hparams_.rope_freq_base;
     auto& layer = layers_[i];
 
     tensor_2 normalized_states =
@@ -443,7 +447,7 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
         print_tensor(q_reshaped, "Qcur-" + std::to_string(i) + " (reshaped)"));
     tensor_3 q_cur = run_norm(q_reshaped, layer.attn_q_norm_weight, i);
     VERBOSE(print_tensor(q_cur, "Qcur_normed-" + std::to_string(i)));
-    rope(q_cur, n_embd_head, hparams_.rope_freq_base, hparams_.rope_freq_scale,
+    rope(q_cur, n_embd_head, this_rope_freq_base, hparams_.rope_freq_scale,
          pos);
     VERBOSE(print_tensor(q_cur, "Qcur-" + std::to_string(i) + " (post rope)"));
     scale(q_cur, hparams_.f_attention_scale);
@@ -464,7 +468,7 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
         print_tensor(k_reshaped, "Kcur-" + std::to_string(i) + " (reshaped)"));
     tensor_3 k_cur = run_norm(k_reshaped, layer.attn_k_norm_weight, i);
     VERBOSE(print_tensor(k_cur, "Kcur_normed-" + std::to_string(i)));
-    rope(k_cur, n_embd_head, hparams_.rope_freq_base, hparams_.rope_freq_scale,
+    rope(k_cur, n_embd_head, this_rope_freq_base, hparams_.rope_freq_scale,
          pos);
     VERBOSE(print_tensor(k_cur, "Kcur-" + std::to_string(i) + " (post rope)"));
 
