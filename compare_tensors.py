@@ -139,9 +139,11 @@ def main():
                     'idx': len(results)
                 })
             else:
-                print(f"Warning: More instances of {name} in file1 than file2")
+                pass
+                #print(f"Warning: More instances of {name} in file1 than file2")
         else:
-            print(f"Warning: {name} not found in reference file")
+            pass
+            #print(f"Warning: {name} not found in reference file")
 
     if not results:
         print("No matching tensors found to compare.")
@@ -177,11 +179,11 @@ def main():
     plt.savefig(out_png)
     print(f"Plot saved to {out_png}")
 
-    # Print diffs for the first 20 or so matching tensors
-    print("\nFirst 20 Tensor Comparisons:")
+    # Print diffs for the first 40 or so matching tensors
+    print("\nFirst 40 Tensor Comparisons:")
     print(f"{'Index':<6} {'Tensor Name':<40} {'Sum Diff':<15} {'Weight MSE':<15}")
     print("-" * 80)
-    for r in results[:20]:
+    for r in results[:40]:
         print(f"{r['idx']:<6} {r['name']:<40} {r['sum_diff']:<15.6e} {r['weight_mse']:<15.6e}")
 
     # Print top top deviations
