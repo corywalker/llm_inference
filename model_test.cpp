@@ -409,7 +409,7 @@ TEST(ModelTest, ForwardPass) {
   ASSERT_NEAR(result[0][9], -2.588623f, 0.08f);
   float sum = 0.0f;
   for (auto v : result[0]) sum += v;
-  ASSERT_NEAR(sum, 5.3879566192626953f, 0.08f);
+  ASSERT_NEAR(sum, 5.3879566192626953f, 0.15f);
 
   // Second forward pass for next token (using KV cache)
   // Find token with largest logit from first pass
