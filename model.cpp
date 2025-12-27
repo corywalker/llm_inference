@@ -341,9 +341,11 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
       for (uint32_t t_k = 0; t_k <= pos + t; ++t_k) {
         const tensor_f16_1& k_vec = kv_cache.k[t_k][h_kv];
 
-        float score = 0.0f;
+        double score = 0.0f;
         for (uint32_t i = 0; i < n_embd_head; ++i) {
-          score += q_vec[i] * f16_to_f32(k_vec[i]);
+          // Downcast Q value to f16 to align with llama.cpp.
+          uint16_t Q_q = f32_to_f16(q_vec[i]);
+          score += (double)(f16_to_f32(k_vec[i]) * f16_to_f32(Q_q));
         }
 
         if (logit_softcap > 0.0f) {
@@ -356,17 +358,21 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
         }
 
         const float prev_max_score = max_score;
-        if (score > max_score) {
+        float score_exp;
+        float prev_score_exp;
+        if (score > prev_max_score) {
           max_score = score;
+          score_exp = 1.0f;
+          prev_score_exp = expf(prev_max_score - max_score);
+          // V = V*expf(Mold - M)
+          vec_scale_f16(v_acc, prev_score_exp);
+        } else {
+          score_exp = expf(score - max_score);
+          prev_score_exp = 1.0f;
+          // No scaling needed as prev_score_exp is 1.0
         }
 
-        const float score_exp = expf(score - max_score);
-        const float prev_score_exp = expf(prev_max_score - max_score);
-
         const tensor_f16_1& v_vec = kv_cache.v[t_k][h_kv];
-
-        // V = V*expf(Mold - M)
-        vec_scale_f16(v_acc, prev_score_exp);
 
         // V += v*expf(s - M)
         vec_mad_f16(v_acc, v_vec, score_exp);
