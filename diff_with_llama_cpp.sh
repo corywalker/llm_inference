@@ -22,5 +22,7 @@ sed -i.bak 's/^                                 //g' ./tmp/llama_cpp_out.txt
 rm -f ./tmp/llama_cpp_out.txt.bak
 echo "Running llm_inference..."
 ./bazel-bin/llm_inference "${COMMON_ARGS[@]}" --no-cnv > ./tmp/llm_inference_out.txt 2>&1
+sed -E -i.bak 's/(.cur-[0-9]+)([[:space:]]+= \(f32\)[[:space:]]+ROPE)/\1 (post rope)\2/g' ./tmp/llama_cpp_out.txt
+rm -f ./tmp/llama_cpp_out.txt.bak
 
 python3 compare_tensors.py
