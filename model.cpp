@@ -537,17 +537,16 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     all_ffn_hidden_outputs.reserve(normalized_states2.size());
     for (size_t token_idx = 0; token_idx < normalized_states2.size();
          ++token_idx) {
-      tensor_1& ffn_gate_output = ffn_gate_outputs[token_idx];
+      const tensor_1& ffn_gate_output = ffn_gate_outputs[token_idx];
       const tensor_1& ffn_up_output = ffn_up_outputs[token_idx];
-
-      for (size_t j = 0; j < ffn_gate_output.size(); ++j) {
-        ffn_gate_output[j] =
-            ffn_gate_output[j] * (1.0f / (1.0f + expf(-ffn_gate_output[j])));
-      }
 
       tensor_1 ffn_hidden(ffn_gate_output.size());
       for (size_t j = 0; j < ffn_hidden.size(); ++j) {
-        ffn_hidden[j] = ffn_gate_output[j] * ffn_up_output[j];
+        float x = ffn_gate_output[j];
+        float gelu_x =
+            0.5f * x *
+            (1.0f + tanhf(sqrtf(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
+        ffn_hidden[j] = gelu_x * ffn_up_output[j];
       }
       all_ffn_hidden_outputs.push_back(ffn_hidden);
     }
