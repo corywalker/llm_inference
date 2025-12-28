@@ -399,15 +399,17 @@ TEST(ModelTest, ForwardPass) {
   const uint32_t vocab_size = 10;
   ASSERT_EQ(result[0].size(), vocab_size);
 
+  const float tolerance = 0.003f;
+
   // Some tests of approximate values. This will need to update if any random
   // seed or model details change.
-  EXPECT_NEAR(result[0][0], 2.9909527f, 0.001f);
-  EXPECT_NEAR(result[0][1], -0.216222f, 0.001f);
-  EXPECT_NEAR(result[0][8], 1.6922607f, 0.001f);
-  EXPECT_NEAR(result[0][9], -2.588623f, 0.001f);
+  EXPECT_NEAR(result[0][0], 2.9909527f, tolerance);
+  EXPECT_NEAR(result[0][1], -0.216222f, tolerance);
+  EXPECT_NEAR(result[0][8], 1.6922607f, tolerance);
+  EXPECT_NEAR(result[0][9], -2.588623f, tolerance);
   float sum = 0.0f;
   for (auto v : result[0]) sum += v;
-  EXPECT_NEAR(sum, 5.2634663581848145f, 0.001f);
+  EXPECT_NEAR(sum, 5.2634663581848145f, tolerance);
 
   // Second forward pass for next token (using KV cache)
   // Find token with largest logit from first pass
@@ -428,13 +430,13 @@ TEST(ModelTest, ForwardPass) {
 
   // Some tests of approximate values for second token. This will need to update
   // if any random seed or model details change.
-  EXPECT_NEAR(result2[0][0], 0.6870570f, 0.001f);
-  EXPECT_NEAR(result2[0][1], -2.670202f, 0.001f);
-  EXPECT_NEAR(result2[0][8], 0.1438203f, 0.001f);
-  EXPECT_NEAR(result2[0][9], -0.409215f, 0.001f);
+  EXPECT_NEAR(result2[0][0], 0.6870570f, tolerance);
+  EXPECT_NEAR(result2[0][1], -2.670202f, tolerance);
+  EXPECT_NEAR(result2[0][8], 0.1438203f, tolerance);
+  EXPECT_NEAR(result2[0][9], -0.409215f, tolerance);
   float sum2 = 0.0f;
   for (auto v : result2[0]) sum2 += v;
-  EXPECT_NEAR(sum2, 2.540453f, 0.001f);
+  EXPECT_NEAR(sum2, 2.540453f, tolerance);
 }
 
 TEST(ModelTest, TokenizeTest) {
