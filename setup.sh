@@ -9,18 +9,14 @@ if [ ! -d "./gemma-3-1b-it-qat-q4_0-gguf" ]; then
 fi
 
 sudo apt-get update && sudo apt-get install -y clang-format
+sudo apt-get install -y curl
 # Install Bazel
 if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
-  sudo apt-get install -y curl
   sudo curl -Lo /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64
-  sudo chmod +x /usr/local/bin/bazel
 else
-  sudo apt-get install -y curl gnupg && \
-  curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor > bazel.gpg && \
-  sudo mv bazel.gpg /etc/apt/trusted.gpg.d/ && \
-  echo "deb [arch=amd64] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list && \
-  sudo apt-get update && sudo apt-get install -y bazel
+  sudo curl -Lo /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64
 fi
+sudo chmod +x /usr/local/bin/bazel
 
 sudo apt-get install -y linux-tools-common linux-tools-generic
 
