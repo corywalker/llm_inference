@@ -427,22 +427,21 @@ void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
 #if defined(__aarch64__) || defined(__arm64__)
   // 1. Convert input x (F32) to x_f16 (F16) using NEON
   // We align to 8 elements (128-bit for FP16 is 8x16-bit)
-  std::vector<float16_t> x_f16(n_cols);
+  std::vector<uint16_t> x_f16(n_cols);
   size_t j = 0;
   for (; j + 3 < n_cols; j += 4) {
     float32x4_t f32_val = vld1q_f32(x.data() + j);
     float16x4_t f16_val = vcvt_f16_f32(f32_val);
-    vst1_f16(reinterpret_cast<float16_t*>(x_f16.data() + j), f16_val);
+    vst1_f16(reinterpret_cast<__fp16*>(x_f16.data() + j), f16_val);
   }
   for (; j < n_cols; ++j) {
-    x_f16[j] = static_cast<float16_t>(x[j]);
+    x_f16[j] = f32_to_f16(x[j]);
   }
 
   auto compute_range = [&](size_t start_row, size_t end_row) {
     for (size_t i = start_row; i < end_row; ++i) {
-      const float16_t* w_ptr =
-          reinterpret_cast<const float16_t*>(w.data() + i * n_cols);
-      const float16_t* x_ptr = x_f16.data();
+      const uint16_t* w_ptr = w.data() + i * n_cols;
+      const uint16_t* x_ptr = x_f16.data();
 
       // Accumulators
       float16x8_t sum_vec0 = vdupq_n_f16(0.0f);
@@ -453,20 +452,26 @@ void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
       size_t k = 0;
       // Unroll 4x (32 elements per loop)
       for (; k + 31 < n_cols; k += 32) {
-        float16x8_t w0 = vld1q_f16(w_ptr + k);
-        float16x8_t x0 = vld1q_f16(x_ptr + k);
+        float16x8_t w0 = vld1q_f16(reinterpret_cast<const __fp16*>(w_ptr + k));
+        float16x8_t x0 = vld1q_f16(reinterpret_cast<const __fp16*>(x_ptr + k));
         sum_vec0 = vfmaq_f16(sum_vec0, w0, x0);
 
-        float16x8_t w1 = vld1q_f16(w_ptr + k + 8);
-        float16x8_t x1 = vld1q_f16(x_ptr + k + 8);
+        float16x8_t w1 =
+            vld1q_f16(reinterpret_cast<const __fp16*>(w_ptr + k + 8));
+        float16x8_t x1 =
+            vld1q_f16(reinterpret_cast<const __fp16*>(x_ptr + k + 8));
         sum_vec1 = vfmaq_f16(sum_vec1, w1, x1);
 
-        float16x8_t w2 = vld1q_f16(w_ptr + k + 16);
-        float16x8_t x2 = vld1q_f16(x_ptr + k + 16);
+        float16x8_t w2 =
+            vld1q_f16(reinterpret_cast<const __fp16*>(w_ptr + k + 16));
+        float16x8_t x2 =
+            vld1q_f16(reinterpret_cast<const __fp16*>(x_ptr + k + 16));
         sum_vec2 = vfmaq_f16(sum_vec2, w2, x2);
 
-        float16x8_t w3 = vld1q_f16(w_ptr + k + 24);
-        float16x8_t x3 = vld1q_f16(x_ptr + k + 24);
+        float16x8_t w3 =
+            vld1q_f16(reinterpret_cast<const __fp16*>(w_ptr + k + 24));
+        float16x8_t x3 =
+            vld1q_f16(reinterpret_cast<const __fp16*>(x_ptr + k + 24));
         sum_vec3 = vfmaq_f16(sum_vec3, w3, x3);
       }
 
@@ -477,8 +482,10 @@ void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
 
       // Handle remaining blocks of 8
       for (; k + 7 < n_cols; k += 8) {
-        float16x8_t w_val = vld1q_f16(w_ptr + k);
-        float16x8_t x_val = vld1q_f16(x_ptr + k);
+        float16x8_t w_val =
+            vld1q_f16(reinterpret_cast<const __fp16*>(w_ptr + k));
+        float16x8_t x_val =
+            vld1q_f16(reinterpret_cast<const __fp16*>(x_ptr + k));
         sum_vec0 = vfmaq_f16(sum_vec0, w_val, x_val);
       }
 
@@ -487,9 +494,55 @@ void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
 
       // Handle remainders (scalar)
       for (; k < n_cols; ++k) {
-        result += (float)w_ptr[k] * (float)x_ptr[k];
+        result += f16_to_f32(w_ptr[k]) * f16_to_f32(x_ptr[k]);
       }
       o[i] = result;
+    }
+  };
+#elif defined(__AVX2__) && defined(__FMA__) && defined(__F16C__)
+  std::vector<uint16_t> x_f16(n_cols);
+  size_t j = 0;
+  for (; j + 7 < n_cols; j += 8) {
+    __m256 v = _mm256_loadu_ps(x.data() + j);
+    __m128i vh = _mm256_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(x_f16.data() + j), vh);
+  }
+  for (; j < n_cols; ++j) {
+    x_f16[j] = f32_to_f16(x[j]);
+  }
+  auto compute_range = [&](size_t start_row, size_t end_row) {
+    for (size_t i = start_row; i < end_row; ++i) {
+      const uint16_t* w_ptr = w.data() + i * n_cols;
+      const uint16_t* x_ptr = x_f16.data();
+
+      const size_t np = n_cols & ~31;
+
+      __m256 sum[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(),
+                       _mm256_setzero_ps(), _mm256_setzero_ps()};
+
+      for (size_t k = 0; k < np; k += 32) {
+        for (int l = 0; l < 4; ++l) {
+          __m256 w_v = _mm256_cvtph_ps(_mm_loadu_si128(
+              reinterpret_cast<const __m128i*>(w_ptr + k + l * 8)));
+          __m256 x_v = _mm256_cvtph_ps(_mm_loadu_si128(
+              reinterpret_cast<const __m128i*>(x_ptr + k + l * 8)));
+          sum[l] = _mm256_fmadd_ps(w_v, x_v, sum[l]);
+        }
+      }
+
+      sum[0] = _mm256_add_ps(sum[0], sum[1]);
+      sum[2] = _mm256_add_ps(sum[2], sum[3]);
+      sum[0] = _mm256_add_ps(sum[0], sum[2]);
+
+      const __m128 t0 = _mm_add_ps(_mm256_castps256_ps128(sum[0]),
+                                   _mm256_extractf128_ps(sum[0], 1));
+      const __m128 t1 = _mm_hadd_ps(t0, t0);
+      float sum_f = _mm_cvtss_f32(_mm_hadd_ps(t1, t1));
+
+      for (size_t k = np; k < n_cols; ++k) {
+        sum_f += f16_to_f32(w_ptr[k]) * f16_to_f32(x_ptr[k]);
+      }
+      o[i] = sum_f;
     }
   };
 #else

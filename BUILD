@@ -44,7 +44,7 @@ cc_library(
         "//:macos_arm64": [],
         "//:linux_arm64": ["-march=armv8.2-a+dotprod+fp16"],
         "//:clang_config": ["-march=armv8.2-a+dotprod+fp16"],
-        "//conditions:default": ["-mavx2", "-mfma"],
+        "//conditions:default": ["-mavx2", "-mfma", "-mf16c"],
     }),
     visibility = ["//:__subpackages__"],
     deps = [":common", ":gguf"],
