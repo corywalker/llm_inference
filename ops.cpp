@@ -279,66 +279,84 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
 
       o[row] = vaddvq_f32(sum_v0) + vaddvq_f32(sum_v1) + sum_remaining;
     }
-#elif defined(__x86_64__)
+#elif defined(__AVX2__)
     // Process each output row
+    // horizontally add 8 floats
+    auto hsum_float_8 = [](const __m256 x) {
+      __m128 res = _mm256_extractf128_ps(x, 1);
+      res = _mm_add_ps(res, _mm256_castps256_ps128(x));
+      res = _mm_add_ps(res, _mm_movehl_ps(res, res));
+      res = _mm_add_ss(res, _mm_movehdup_ps(res));
+      return _mm_cvtss_f32(res);
+    };
+
+    // Unpack 32 4-bit fields into 32 bytes
+    // The output vector contains 32 bytes, each one in [ 0 .. 15 ] interval
+    auto bytes_from_nibbles_32 = [](const uint8_t* rsi) {
+      const __m128i tmp = _mm_loadu_si128((const __m128i*)rsi);
+      const __m256i bytes = _mm256_insertf128_si256(_mm256_castsi128_si256(tmp),
+                                                    _mm_srli_epi16(tmp, 4), 1);
+      const __m256i lowMask = _mm256_set1_epi8(0xF);
+      return _mm256_and_si256(lowMask, bytes);
+    };
+
+    // add int16_t pairwise and return as float vector
+    auto sum_i16_pairs_float = [](const __m256i x) {
+      const __m256i ones = _mm256_set1_epi16(1);
+      const __m256i summed_pairs = _mm256_madd_epi16(ones, x);
+      return _mm256_cvtepi32_ps(summed_pairs);
+    };
+
+    auto mul_sum_us8_pairs_float = [&](const __m256i ax, const __m256i sy) {
+      // Perform multiplication and create 16-bit values
+      const __m256i dot = _mm256_maddubs_epi16(ax, sy);
+      return sum_i16_pairs_float(dot);
+    };
+
+    // multiply int8_t, add results pairwise twice and return as float vector
+    auto mul_sum_i8_pairs_float = [&](const __m256i x, const __m256i y) {
+      // Get absolute values of x vectors
+      const __m256i ax = _mm256_sign_epi8(x, x);
+      // Sign the values of the y vectors
+      const __m256i sy = _mm256_sign_epi8(y, x);
+      return mul_sum_us8_pairs_float(ax, sy);
+    };
+
     for (size_t row = start_row; row < end_row; ++row) {
       const BlockQ8_0* x_blocks = x_q8_0.data();
       const uint8_t* row_w_ptr =
           w_data + row * blocks_per_row * bytes_per_block;
 
-      float sum_f = 0.0f;
-      const __m128i m4b = _mm_set1_epi8(0x0F);
-      const __m128i o8 = _mm_set1_epi8(8);
+      // Initialize accumulator with zeros
+      __m256 acc = _mm256_setzero_ps();
 
+      // Main loop
       for (size_t block_idx = 0; block_idx < blocks_per_row; ++block_idx) {
         const uint8_t* block_ptr = row_w_ptr + block_idx * bytes_per_block;
         const uint16_t* f16_scale_ptr =
             reinterpret_cast<const uint16_t*>(block_ptr);
         const uint8_t* w_quants_ptr = block_ptr + sizeof(uint16_t);
 
-        float w_scale = f16_to_f32(*f16_scale_ptr);
-        float x_scale = f16_to_f32(x_blocks[block_idx].d);
-        float combined_scale = w_scale * x_scale;
+        /* Compute combined scale for the block */
+        const __m256 d = _mm256_set1_ps(f16_to_f32(*f16_scale_ptr) *
+                                        f16_to_f32(x_blocks[block_idx].d));
 
-        const int8_t* x_quants_ptr = x_blocks[block_idx].qs;
+        __m256i qx = bytes_from_nibbles_32(w_quants_ptr);
 
-        // Load x quants
-        const __m128i x_q8_l =
-            _mm_loadu_si128(reinterpret_cast<const __m128i*>(x_quants_ptr));
-        const __m128i x_q8_h = _mm_loadu_si128(
-            reinterpret_cast<const __m128i*>(x_quants_ptr + 16));
+        // Now we have a vector with bytes in [ 0 .. 15 ] interval. Offset them
+        // into [ -8 .. +7 ] interval.
+        const __m256i off = _mm256_set1_epi8(8);
+        qx = _mm256_sub_epi8(qx, off);
 
-        // Load and unpack w quants
-        const __m128i w_q4 =
-            _mm_loadu_si128(reinterpret_cast<const __m128i*>(w_quants_ptr));
-        const __m128i w_q4_l = _mm_and_si128(w_q4, m4b);
-        const __m128i w_q4_h =
-            _mm_srli_epi16(_mm_and_si128(w_q4, _mm_set1_epi8(0xF0)), 4);
-        const __m128i w_s8_l = _mm_sub_epi8(w_q4_l, o8);
-        const __m128i w_s8_h = _mm_sub_epi8(w_q4_h, o8);
+        __m256i qy = _mm256_loadu_si256((const __m256i*)x_blocks[block_idx].qs);
 
-        // Convert to 16-bit and multiply-add
-        const __m256i x_s16_l = _mm256_cvtepi8_epi16(x_q8_l);
-        const __m256i w_s16_l = _mm256_cvtepi8_epi16(w_s8_l);
-        const __m256i dot_l = _mm256_madd_epi16(x_s16_l, w_s16_l);
+        const __m256 q = mul_sum_i8_pairs_float(qx, qy);
 
-        const __m256i x_s16_h = _mm256_cvtepi8_epi16(x_q8_h);
-        const __m256i w_s16_h = _mm256_cvtepi8_epi16(w_s8_h);
-        const __m256i dot_h = _mm256_madd_epi16(x_s16_h, w_s16_h);
-
-        // Sum dot products
-        const __m256i dot = _mm256_add_epi32(dot_l, dot_h);
-
-        // Horizontal sum of dot
-        __m128i sum_128 = _mm_add_epi32(_mm256_extracti128_si256(dot, 0),
-                                        _mm256_extracti128_si256(dot, 1));
-        sum_128 = _mm_hadd_epi32(sum_128, sum_128);
-        sum_128 = _mm_hadd_epi32(sum_128, sum_128);
-        int32_t dot_product = _mm_cvtsi128_si32(sum_128);
-
-        sum_f += (float)dot_product * combined_scale;
+        /* Multiply q with scale and accumulate */
+        acc = _mm256_fmadd_ps(d, q, acc);
       }
-      o[row] = sum_f;
+
+      o[row] = hsum_float_8(acc);
     }
 #else
     // Process each output row
