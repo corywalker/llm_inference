@@ -401,15 +401,13 @@ TEST(ModelTest, ForwardPass) {
 
   // Some tests of approximate values. This will need to update if any random
   // seed or model details change.
-  // Tolerances are currently a bit loose after the vdotq_s32 change on M1.
-  // Numbers are slightly different on M1 vs AVX right now.
-  ASSERT_NEAR(result[0][0], 3.0236678f, 0.08f);
-  ASSERT_NEAR(result[0][1], -0.185612f, 0.08f);
-  ASSERT_NEAR(result[0][8], 1.6922607f, 0.08f);
-  ASSERT_NEAR(result[0][9], -2.588623f, 0.08f);
+  EXPECT_NEAR(result[0][0], 2.9909527f, 0.001f);
+  EXPECT_NEAR(result[0][1], -0.216222f, 0.001f);
+  EXPECT_NEAR(result[0][8], 1.6922607f, 0.001f);
+  EXPECT_NEAR(result[0][9], -2.588623f, 0.001f);
   float sum = 0.0f;
   for (auto v : result[0]) sum += v;
-  ASSERT_NEAR(sum, 5.3879566192626953f, 0.15f);
+  EXPECT_NEAR(sum, 5.2634663581848145f, 0.001f);
 
   // Second forward pass for next token (using KV cache)
   // Find token with largest logit from first pass
@@ -430,13 +428,13 @@ TEST(ModelTest, ForwardPass) {
 
   // Some tests of approximate values for second token. This will need to update
   // if any random seed or model details change.
-  ASSERT_NEAR(result2[0][0], 0.6860351f, 0.08f);
-  ASSERT_NEAR(result2[0][1], -2.716422f, 0.08f);
-  ASSERT_NEAR(result2[0][8], 0.182562f, 0.08f);
-  ASSERT_NEAR(result2[0][9], -0.36010f, 0.08f);
+  EXPECT_NEAR(result2[0][0], 0.6870570f, 0.001f);
+  EXPECT_NEAR(result2[0][1], -2.670202f, 0.001f);
+  EXPECT_NEAR(result2[0][8], 0.1438203f, 0.001f);
+  EXPECT_NEAR(result2[0][9], -0.409215f, 0.001f);
   float sum2 = 0.0f;
   for (auto v : result2[0]) sum2 += v;
-  ASSERT_NEAR(sum2, 2.5281672477722168f, 0.08f);
+  EXPECT_NEAR(sum2, 2.540453f, 0.001f);
 }
 
 TEST(ModelTest, TokenizeTest) {

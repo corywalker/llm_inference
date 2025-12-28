@@ -166,11 +166,9 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
   const size_t blocks_per_row = (n_cols + block_size - 1) / block_size;
   const uint8_t* w_data = gguf_file.get_tensor_data(w_tensor);
 
-  // Pre-quantize x to Q8_0 for ARM DOT optimization
-#if defined(__aarch64__) || defined(__arm64__)
+  // Pre-quantize x to Q8_0 for integer dot product
   std::vector<BlockQ8_0> x_q8_0;
   quantize_row_q8_0(x, x_q8_0, n_cols);
-#endif
 
   auto compute_range = [&](size_t start_row, size_t end_row) {
 #if defined(__aarch64__) || defined(__arm64__)
@@ -284,100 +282,63 @@ void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
 #elif defined(__x86_64__)
     // Process each output row
     for (size_t row = start_row; row < end_row; ++row) {
-      __m256 sum_vec = _mm256_setzero_ps();
-      const float* x_ptr = x.data();
-      size_t col = 0;
+      const BlockQ8_0* x_blocks = x_q8_0.data();
+      const uint8_t* row_w_ptr =
+          w_data + row * blocks_per_row * bytes_per_block;
 
-      const size_t num_blocks_simd = n_cols / block_size;
+      float sum_f = 0.0f;
+      const __m128i m4b = _mm_set1_epi8(0x0F);
+      const __m128i o8 = _mm_set1_epi8(8);
 
-      for (size_t block_idx = 0; block_idx < num_blocks_simd; ++block_idx) {
-        const uint8_t* block_ptr =
-            w_data + (row * blocks_per_row + block_idx) * bytes_per_block;
+      for (size_t block_idx = 0; block_idx < blocks_per_row; ++block_idx) {
+        const uint8_t* block_ptr = row_w_ptr + block_idx * bytes_per_block;
         const uint16_t* f16_scale_ptr =
             reinterpret_cast<const uint16_t*>(block_ptr);
-        const uint8_t* quants_ptr = block_ptr + sizeof(uint16_t);
+        const uint8_t* w_quants_ptr = block_ptr + sizeof(uint16_t);
 
-        float scale = f16_to_f32(*f16_scale_ptr);
+        float w_scale = f16_to_f32(*f16_scale_ptr);
+        float x_scale = f16_to_f32(x_blocks[block_idx].d);
+        float combined_scale = w_scale * x_scale;
 
-        const __m256 scale_vec = _mm256_set1_ps(scale);
-        const __m128i s8_8 = _mm_set1_epi8(8);
-        const __m128i q_packed =
-            _mm_loadu_si128(reinterpret_cast<const __m128i*>(quants_ptr));
+        const int8_t* x_quants_ptr = x_blocks[block_idx].qs;
 
-        const __m128i q_l = _mm_and_si128(q_packed, _mm_set1_epi8(0x0F));
-        const __m128i q_l_s8 = _mm_sub_epi8(q_l, s8_8);
+        // Load x quants
+        const __m128i x_q8_l =
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(x_quants_ptr));
+        const __m128i x_q8_h = _mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(x_quants_ptr + 16));
 
-        const __m128i q_h =
-            _mm_srli_epi16(_mm_and_si128(q_packed, _mm_set1_epi8(0xF0)), 4);
-        const __m128i q_h_s8 = _mm_sub_epi8(q_h, s8_8);
+        // Load and unpack w quants
+        const __m128i w_q4 =
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(w_quants_ptr));
+        const __m128i w_q4_l = _mm_and_si128(w_q4, m4b);
+        const __m128i w_q4_h =
+            _mm_srli_epi16(_mm_and_si128(w_q4, _mm_set1_epi8(0xF0)), 4);
+        const __m128i w_s8_l = _mm_sub_epi8(w_q4_l, o8);
+        const __m128i w_s8_h = _mm_sub_epi8(w_q4_h, o8);
 
-        // dequantize and dot product for low nibbles
-        {
-          const __m128i q_s16_lo = _mm_cvtepi8_epi16(q_l_s8);
-          const __m128i q_s16_hi = _mm_cvtepi8_epi16(_mm_srli_si128(q_l_s8, 8));
+        // Convert to 16-bit and multiply-add
+        const __m256i x_s16_l = _mm256_cvtepi8_epi16(x_q8_l);
+        const __m256i w_s16_l = _mm256_cvtepi8_epi16(w_s8_l);
+        const __m256i dot_l = _mm256_madd_epi16(x_s16_l, w_s16_l);
 
-          const __m256 w0 = _mm256_mul_ps(
-              _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(q_s16_lo)), scale_vec);
-          const __m256 w1 = _mm256_mul_ps(
-              _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(q_s16_hi)), scale_vec);
+        const __m256i x_s16_h = _mm256_cvtepi8_epi16(x_q8_h);
+        const __m256i w_s16_h = _mm256_cvtepi8_epi16(w_s8_h);
+        const __m256i dot_h = _mm256_madd_epi16(x_s16_h, w_s16_h);
 
-          sum_vec =
-              _mm256_fmadd_ps(_mm256_loadu_ps(x_ptr + col + 0), w0, sum_vec);
-          sum_vec =
-              _mm256_fmadd_ps(_mm256_loadu_ps(x_ptr + col + 8), w1, sum_vec);
-        }
+        // Sum dot products
+        const __m256i dot = _mm256_add_epi32(dot_l, dot_h);
 
-        // dequantize and dot product for high nibbles
-        {
-          const __m128i q_s16_lo = _mm_cvtepi8_epi16(q_h_s8);
-          const __m128i q_s16_hi = _mm_cvtepi8_epi16(_mm_srli_si128(q_h_s8, 8));
+        // Horizontal sum of dot
+        __m128i sum_128 = _mm_add_epi32(_mm256_extracti128_si256(dot, 0),
+                                        _mm256_extracti128_si256(dot, 1));
+        sum_128 = _mm_hadd_epi32(sum_128, sum_128);
+        sum_128 = _mm_hadd_epi32(sum_128, sum_128);
+        int32_t dot_product = _mm_cvtsi128_si32(sum_128);
 
-          const __m256 w0 = _mm256_mul_ps(
-              _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(q_s16_lo)), scale_vec);
-          const __m256 w1 = _mm256_mul_ps(
-              _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(q_s16_hi)), scale_vec);
-
-          sum_vec =
-              _mm256_fmadd_ps(_mm256_loadu_ps(x_ptr + col + 16), w0, sum_vec);
-          sum_vec =
-              _mm256_fmadd_ps(_mm256_loadu_ps(x_ptr + col + 24), w1, sum_vec);
-        }
-        col += block_size;
+        sum_f += (float)dot_product * combined_scale;
       }
-      __m128 sum_vec_128 = _mm_add_ps(_mm256_extractf128_ps(sum_vec, 0),
-                                      _mm256_extractf128_ps(sum_vec, 1));
-      __m128 sum_vec_shuffled = _mm_hadd_ps(sum_vec_128, sum_vec_128);
-      sum_vec_shuffled = _mm_hadd_ps(sum_vec_shuffled, sum_vec_shuffled);
-      float sum = _mm_cvtss_f32(sum_vec_shuffled);
-
-      // Scalar remainder for remainder of blocks
-      for (size_t block_idx = num_blocks_simd; block_idx < blocks_per_row;
-           ++block_idx) {
-        const uint8_t* block_ptr =
-            w_data + (row * blocks_per_row + block_idx) * bytes_per_block;
-        const uint16_t* f16_scale_ptr =
-            reinterpret_cast<const uint16_t*>(block_ptr);
-        const uint8_t* quants_ptr = block_ptr + sizeof(uint16_t);
-
-        float scale = f16_to_f32(*f16_scale_ptr);
-
-        const int half_block_size = 16;
-        for (int i = 0; i < half_block_size; ++i) {
-          if (col + i >= n_cols) break;
-          uint8_t q_low = quants_ptr[i] & 0x0F;
-          float w_val = dequantize_q4_0(q_low, scale);
-          sum += w_val * x[col + i];
-        }
-        for (int i = 0; i < half_block_size; ++i) {
-          if (col + half_block_size + i >= n_cols) break;
-          uint8_t q_high = quants_ptr[i] >> 4;
-          float w_val = dequantize_q4_0(q_high, scale);
-          sum += w_val * x[col + half_block_size + i];
-        }
-        col += block_size;
-      }
-
-      o[row] = sum;
+      o[row] = sum_f;
     }
 #else
     // Process each output row
