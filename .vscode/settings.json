@@ -1,3 +1,9 @@
 {
-    "git.repositoryScanMaxDepth": 3
+    "git.repositoryScanMaxDepth": 3,
+    "search.useIgnoreFiles": false,
+    "files.exclude": {
+        "**/bazel-*": true,
+        "third_party/llama.cpp/build": true,
+        "third_party/llama.cpp/build_dbg": true
+    }
 }
