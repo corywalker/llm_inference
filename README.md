@@ -6,20 +6,27 @@ This project is a C++ implementation for running large language model inference 
 
 - **KV Cache** for efficient decoding.
 - **Vectorized matrix multiplication** using AVX2 (x86) and NEON (ARM) instructions.
-- **Q4_0 quantization only**.
 - **CPU only** - optimized for x86 and Apple Silicon.
 - **Simple architecture** - no computation graph, sequential execution.
-- **No repacking** -- no repacking for simplicity.
-- **Greedy sampling**.
+
+## Limitations
+
+- Q4_0 quantization only.
+- No repacking.
+- No multimodal support.
+- Greedy sampling only.
 
 ## Tested Models
 
 This project has been tested with:
 - [google/gemma-3-1b-it-qat-q4_0-gguf/blob/main/gemma-3-1b-it-q4_0.gguf](https://huggingface.co/google/gemma-3-1b-it-qat-q4_0-gguf/blob/main/gemma-3-1b-it-q4_0.gguf)
 - [google/gemma-3-4b-it-qat-q4_0-gguf/blob/main/gemma-3-4b-it-q4_0.gguf](https://huggingface.co/google/gemma-3-4b-it-qat-q4_0-gguf/blob/main/gemma-3-4b-it-q4_0.gguf)
+- [google/gemma-3-12b-it-qat-q4_0-gguf/blob/main/gemma-3-12b-it-q4_0.gguf](https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-gguf/blob/main/gemma-3-12b-it-q4_0.gguf)
+- [google/gemma-3-27b-it-qat-q4_0-gguf/blob/main/gemma-3-27b-it-q4_0.gguf](https://huggingface.co/google/gemma-3-27b-it-qat-q4_0-gguf/blob/main/gemma-3-27b-it-q4_0.gguf)
+
 
 Known not working:
-- [unsloth/gemma-3-270m-it-GGUF/blob/main/gemma-3-270m-it-Q4_0.gguf](https://huggingface.co/unsloth/gemma-3-270m-it-GGUF/blob/main/gemma-3-270m-it-Q4_0.gguf)
+- [unsloth/gemma-3-270m-it-GGUF/blob/main/gemma-3-270m-it-Q4_0.gguf](https://huggingface.co/unsloth/gemma-3-270m-it-GGUF/blob/main/gemma-3-270m-it-Q4_0.gguf) (uses some unsupported quantizations)
 
 ## Getting Started
 
