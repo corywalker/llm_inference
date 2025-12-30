@@ -8,6 +8,7 @@ This project is a C++ implementation for running large language model inference 
 - **Vectorized matrix multiplication** using AVX2 (x86) and NEON (ARM) instructions.
 - **CPU only** - optimized for x86 and Apple Silicon.
 - **Simple architecture** - no computation graph, sequential execution.
+- **Reasonably fast** - for a supported architecture and model, you can expect this implementation to be almost as fast as llama.cpp.
 
 ## Limitations
 
@@ -15,6 +16,7 @@ This project is a C++ implementation for running large language model inference 
 - No repacking.
 - No multimodal support.
 - Greedy sampling only.
+- No disaggregated inference. Prefill will be slower because of this.
 
 ## Tested Models
 
