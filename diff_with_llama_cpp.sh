@@ -17,8 +17,9 @@ mkdir -p ./tmp
 echo "Running llama cpp..."
 # llama-eval-callback does --no-cnv by default
 "$LLAMA_EVAL_CALLBACK_BIN" "${COMMON_ARGS[@]}" -s 123 --no-repack > ./tmp/llama_cpp_out.txt 2>&1
-sed -E -i.bak 's/^ggml_debug:[[:space:]]+//g' ./tmp/llama_cpp_out.txt
-sed -i.bak 's/^                                 //g' ./tmp/llama_cpp_out.txt
+# llama-eval-callback uses prefixes like ggml_debug: or common_debug_cb_eval:
+# We strip anything before the first colon + whitespace.
+sed -E -i.bak 's/^[^:]*:[[:space:]]+//g' ./tmp/llama_cpp_out.txt
 rm -f ./tmp/llama_cpp_out.txt.bak
 echo "Running llm_inference..."
 ./bazel-bin/llm_inference "${COMMON_ARGS[@]}" --no-cnv > ./tmp/llm_inference_out.txt 2>&1
