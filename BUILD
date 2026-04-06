@@ -1,3 +1,5 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
 config_setting(
     name = "macos_arm64",
     values = {"cpu": "darwin_arm64"},
