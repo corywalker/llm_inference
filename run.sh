@@ -2,8 +2,8 @@ set -e
 
 bazel build -c opt //:llm_inference
 if [[ "$(uname)" == "Darwin" ]]; then
-    MODEL_LOC=~/Documents/temp/gemma-3-1b-it-q4_0.gguf
+    MODEL_LOC="$HOME/.cache/lm-studio/models/lmstudio-community/gemma-3-4b-it-GGUF/gemma-3-4b-it-Q4_K_M.gguf"
 else
-    MODEL_LOC=~/gemma-3-1b-it-qat-q4_0-gguf/gemma-3-1b-it-q4_0.gguf
+    MODEL_LOC=~/gemma-3-4b-it-Q4_K_M.gguf
 fi
 time bazel-bin/llm_inference --model ${MODEL_LOC} "$@"

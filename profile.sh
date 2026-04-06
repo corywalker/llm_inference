@@ -14,7 +14,7 @@ done
 bazel build -c opt --copt=-g --strip=never --fission=no //:llm_inference
 if [ "$OS" = "Linux" ]; then
     sudo sysctl -w kernel.perf_event_paranoid=-1
-    timeout -s INT 15s perf record -g -- bazel-bin/llm_inference --model ~/gemma-3-1b-it-qat-q4_0-gguf/gemma-3-1b-it-q4_0.gguf --prompt="Write a poem" || true
+    timeout -s INT 15s perf record -g -- bazel-bin/llm_inference --model ~/gemma-3-4b-it-Q4_K_M.gguf --prompt="Write a poem" || true
     if [ "$TEXT_OUTPUT" = true ]; then
         perf report --stdio
     else
@@ -25,7 +25,7 @@ if [ "$OS" = "Linux" ]; then
     fi
 elif [ "$OS" = "Darwin" ]; then
     if [ "$TEXT_OUTPUT" = true ]; then
-        bazel-bin/llm_inference --model ~/Documents/temp/gemma-3-1b-it-q4_0.gguf --prompt="Write a poem" &
+        bazel-bin/llm_inference --model "$HOME/.cache/lm-studio/models/lmstudio-community/gemma-3-4b-it-GGUF/gemma-3-4b-it-Q4_K_M.gguf" --prompt="Write a poem" &
         PID=$!
         sample $PID 10 -f /tmp/sample.txt
         kill $PID || true
@@ -34,7 +34,7 @@ elif [ "$OS" = "Darwin" ]; then
         rm /tmp/sample.txt
     else
         rm -rf mac_profile.trace
-        xcrun xctrace record --template 'Time Profiler' --time-limit 15s --launch --output mac_profile.trace -- bazel-bin/llm_inference --model ~/Documents/temp/gemma-3-1b-it-q4_0.gguf --prompt="Write a poem" || true
+        xcrun xctrace record --template 'Time Profiler' --time-limit 15s --launch --output mac_profile.trace -- bazel-bin/llm_inference --model "$HOME/.cache/lm-studio/models/lmstudio-community/gemma-3-4b-it-GGUF/gemma-3-4b-it-Q4_K_M.gguf" --prompt="Write a poem" || true
         killall Instruments || true
         open mac_profile.trace
     fi
