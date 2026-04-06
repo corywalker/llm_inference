@@ -11,8 +11,34 @@
 #include "tensor.h"
 
 Model::Model(GGUFFile& gguf_file) : gguf_file_(gguf_file) {
+  token_embd_weight_ = nullptr;
+  output_norm_weight_ = nullptr;
+  token_embd_per_layer_weight_ = nullptr;
+  per_layer_model_proj_weight_ = nullptr;
+  per_layer_proj_norm_weight_ = nullptr;
+  
   load_hparams(gguf_file);
   layers_.resize(hparams_.block_count);
+  for (auto& layer : layers_) {
+    layer.attn_norm_weight = nullptr;
+    layer.attn_q_weight = nullptr;
+    layer.attn_k_weight = nullptr;
+    layer.attn_v_weight = nullptr;
+    layer.attn_output_weight = nullptr;
+    layer.ffn_norm_weight = nullptr;
+    layer.ffn_gate_weight = nullptr;
+    layer.ffn_up_weight = nullptr;
+    layer.ffn_down_weight = nullptr;
+    layer.post_attention_norm_weight = nullptr;
+    layer.post_ffw_norm_weight = nullptr;
+    layer.attn_k_norm_weight = nullptr;
+    layer.attn_q_norm_weight = nullptr;
+    layer.out_scale_weight = nullptr;
+    layer.per_layer_inp_gate_weight = nullptr;
+    layer.per_layer_proj_weight = nullptr;
+    layer.per_layer_post_norm_weight = nullptr;
+  }
+  
   kv_cache_.resize(hparams_.block_count);
   map_tensors(gguf_file);
   load_vocabulary();
@@ -31,7 +57,6 @@ Model::Model(GGUFFile& gguf_file) : gguf_file_(gguf_file) {
 
 void Model::load_hparams(GGUFFile& gguf_file) {
   const auto& metadata = gguf_file.get_metadata();
-
   auto get_key = [&](const std::string& key,
                      bool die_if_not_found = true) -> const GGUFValue* {
     auto it = metadata.find(key);
@@ -45,19 +70,22 @@ void Model::load_hparams(GGUFFile& gguf_file) {
     return &it->second;
   };
 
-  hparams_.block_count = get_key("gemma3.block_count")->scalar.u32;
-  hparams_.embedding_length = get_key("gemma3.embedding_length")->scalar.u32;
+  hparams_.architecture = get_key("general.architecture")->str;
+  std::string arch = hparams_.architecture;
+
+  hparams_.block_count = get_key(arch + ".block_count")->scalar.u32;
+  hparams_.embedding_length = get_key(arch + ".embedding_length")->scalar.u32;
   hparams_.feed_forward_length =
-      get_key("gemma3.feed_forward_length")->scalar.u32;
+      get_key(arch + ".feed_forward_length")->scalar.u32;
   hparams_.attention_head_count =
-      get_key("gemma3.attention.head_count")->scalar.u32;
+      get_key(arch + ".attention.head_count")->scalar.u32;
   hparams_.attention_head_count_kv =
-      get_key("gemma3.attention.head_count_kv")->scalar.u32;
+      get_key(arch + ".attention.head_count_kv")->scalar.u32;
   hparams_.f_norm_rms_eps =
-      get_key("gemma3.attention.layer_norm_rms_epsilon")->scalar.f32;
-  hparams_.rope_freq_base = get_key("gemma3.rope.freq_base")->scalar.f32;
+      get_key(arch + ".attention.layer_norm_rms_epsilon")->scalar.f32;
+  hparams_.rope_freq_base = get_key(arch + ".rope.freq_base")->scalar.f32;
   // Hardcoding this to 1, since it seems possible that that llama.cpp ignores
-  // the gemma3.rope.scaling.factor of 8 on the larger Gemma model because the
+  // the rope.scaling.factor of 8 on the larger Gemma model because the
   // rope_freq_base is already set to 1,000,000, which inherently handles the
   // extended context. Forcing the scaling factor to 1.0 which is a bit of a
   // hack, but it certainly helps with getting more accurate results.
@@ -65,21 +93,55 @@ void Model::load_hparams(GGUFFile& gguf_file) {
   hparams_.n_embd_head_k =
       hparams_.embedding_length / hparams_.attention_head_count;
   const auto* attention_key_length_value =
-      get_key("gemma3.attention.key_length", false);
+      get_key(arch + ".attention.key_length", false);
   if (attention_key_length_value) {
     hparams_.n_embd_head_k = attention_key_length_value->scalar.u32;
   }
+  
+  const auto* attention_key_length_swa_value =
+      get_key(arch + ".attention.key_length_swa", false);
+  hparams_.n_embd_head_k_swa =
+      attention_key_length_swa_value ? attention_key_length_swa_value->scalar.u32 : hparams_.n_embd_head_k;
+
+  const auto* attention_value_length_value =
+      get_key(arch + ".attention.value_length", false);
+  hparams_.n_embd_head_v =
+      attention_value_length_value ? attention_value_length_value->scalar.u32 : hparams_.n_embd_head_k;
+      
+  const auto* attention_value_length_swa_value =
+      get_key(arch + ".attention.value_length_swa", false);
+  hparams_.n_embd_head_v_swa =
+      attention_value_length_swa_value ? attention_value_length_swa_value->scalar.u32 : hparams_.n_embd_head_v;
+
   hparams_.f_attention_scale = 1.0f / std::sqrt(float(hparams_.n_embd_head_k));
 
   const auto* max_alibi_bias_value =
-      get_key("gemma3.attention.max_alibi_bias", false);
+      get_key(arch + ".attention.max_alibi_bias", false);
   hparams_.f_max_alibi_bias =
       max_alibi_bias_value ? max_alibi_bias_value->scalar.f32 : 0.0f;
 
   const auto* attn_soft_cap_value =
-      get_key("gemma3.attention.logit_softcapping", false);
+      get_key(arch + ".attention.logit_softcapping", false);
   hparams_.attn_soft_cap =
       attn_soft_cap_value ? attn_soft_cap_value->scalar.f32 : 0.0f;
+
+  const auto* swa_layers_value =
+      get_key(arch + ".attention.sliding_window_pattern", false);
+  if (swa_layers_value && swa_layers_value->type == GGUFType::ARRAY) {
+    for (const auto& val : swa_layers_value->arr) {
+      hparams_.swa_layers.push_back(val.scalar.b);
+    }
+  }
+
+  const auto* final_logit_softcap_value =
+      get_key(arch + ".attention.final_logit_softcapping", false);
+  hparams_.final_logit_softcap =
+      final_logit_softcap_value ? final_logit_softcap_value->scalar.f32 : 0.0f;
+
+  const auto* embedding_length_per_layer_value =
+      get_key(arch + ".embedding_length_per_layer", false);
+  hparams_.embedding_length_per_layer =
+      embedding_length_per_layer_value ? embedding_length_per_layer_value->scalar.u32 : 0;
 }
 
 void Model::map_tensors(GGUFFile& gguf_file) {
@@ -91,6 +153,12 @@ void Model::map_tensors(GGUFFile& gguf_file) {
       token_embd_weight_ = &tensor;
     } else if (tensor.name == "output_norm.weight") {
       output_norm_weight_ = &tensor;
+    } else if (tensor.name == "token_embd_per_layer.weight") {
+      token_embd_per_layer_weight_ = &tensor;
+    } else if (tensor.name == "per_layer_model_proj.weight") {
+      per_layer_model_proj_weight_ = &tensor;
+    } else if (tensor.name == "per_layer_proj_norm.weight") {
+      per_layer_proj_norm_weight_ = &tensor;
     } else if (tensor.name.rfind("blk.", 0) == 0) {
       size_t first_dot = tensor.name.find('.');
       size_t second_dot = tensor.name.find('.', first_dot + 1);
@@ -118,14 +186,24 @@ void Model::map_tensors(GGUFFile& gguf_file) {
           layer.ffn_up_weight = &tensor;
         } else if (param_name == "ffn_down.weight") {
           layer.ffn_down_weight = &tensor;
-        } else if (param_name == "post_attention_norm.weight") {
+        } else if (param_name == "post_attention_norm.weight" ||
+                   param_name == "attn_post_norm.weight") {
           layer.post_attention_norm_weight = &tensor;
-        } else if (param_name == "post_ffw_norm.weight") {
+        } else if (param_name == "post_ffw_norm.weight" ||
+                   param_name == "ffn_post_norm.weight") {
           layer.post_ffw_norm_weight = &tensor;
         } else if (param_name == "attn_k_norm.weight") {
           layer.attn_k_norm_weight = &tensor;
         } else if (param_name == "attn_q_norm.weight") {
           layer.attn_q_norm_weight = &tensor;
+        } else if (param_name == "out_scale.weight") {
+          layer.out_scale_weight = &tensor;
+        } else if (param_name == "per_layer_inp_gate.weight") {
+          layer.per_layer_inp_gate_weight = &tensor;
+        } else if (param_name == "per_layer_proj.weight") {
+          layer.per_layer_proj_weight = &tensor;
+        } else if (param_name == "per_layer_post_norm.weight") {
+          layer.per_layer_post_norm_weight = &tensor;
         }
       }
     }
@@ -456,6 +534,127 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
   return all_attention_results;
 }
 
+tensor_3 Model::get_per_layer_inputs(const std::vector<int>& tokens) {
+  if (!token_embd_per_layer_weight_) return {};
+
+  const uint32_t n_embd_per_layer = hparams_.embedding_length_per_layer;
+  const uint32_t n_layer = hparams_.block_count;
+  const uint32_t n_tokens = tokens.size();
+
+  // model.tok_embd_per_layer shape is [n_embd_per_layer * n_layer, vocab_size]
+  // We need to extract rows and reshape.
+  size_t row_size_elements = n_embd_per_layer * n_layer;
+  size_t row_size_bytes = 0;
+  if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::F16) {
+      row_size_bytes = row_size_elements * sizeof(uint16_t);
+  } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q6_K) {
+      row_size_bytes = (row_size_elements / QK_K) * sizeof(block_q6_K);
+  } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q4_K) {
+      row_size_bytes = (row_size_elements / QK_K) * sizeof(block_q4_K);
+  } else {
+      std::cerr << "Error: get_per_layer_inputs: Unsupported tensor type: " << token_embd_per_layer_weight_->tensor_type << std::endl;
+      exit(1);
+  }
+
+  tensor_3 inp_per_layer; // [tokens][layer][embd_per_layer]
+  inp_per_layer.reserve(n_tokens);
+  
+  std::vector<uint8_t> row_buf(row_size_bytes);
+  float scale = std::sqrt((float)n_embd_per_layer);
+
+  for (int token : tokens) {
+    gguf_file_.read_tensor_data_region(*token_embd_per_layer_weight_, 
+                                       token * row_size_bytes, 
+                                       row_buf.data(), row_size_bytes);
+    
+    tensor_1 full_row;
+    if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::F16) {
+        full_row.resize(row_size_elements);
+        const uint16_t* f16_ptr = reinterpret_cast<const uint16_t*>(row_buf.data());
+        for (size_t i = 0; i < row_size_elements; ++i) {
+            full_row[i] = f16_to_f32(f16_ptr[i]) * scale;
+        }
+    } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q6_K) {
+        dequantize_q6_k_row(full_row, row_buf.data(), row_size_elements);
+        for (float& val : full_row) val *= scale;
+    } else {
+        // Handle Q4_K if needed
+        std::cerr << "Error: get_per_layer_inputs: dequantize for Q4_K not implemented for this path" << std::endl;
+        exit(1);
+    }
+
+    tensor_2 layer_inputs;
+    layer_inputs.reserve(n_layer);
+    for (uint32_t l = 0; l < n_layer; ++l) {
+        tensor_1 layer_embd(n_embd_per_layer);
+        for (uint32_t i = 0; i < n_embd_per_layer; ++i) {
+            layer_embd[i] = full_row[l * n_embd_per_layer + i];
+        }
+        layer_inputs.push_back(layer_embd);
+    }
+    inp_per_layer.push_back(layer_inputs);
+  }
+
+  return inp_per_layer;
+}
+
+tensor_3 Model::project_per_layer_inputs(const tensor_2& inputs_embeds, tensor_3& inp_per_layer) {
+    if (!per_layer_model_proj_weight_) return inp_per_layer;
+
+    const uint32_t n_tokens = inputs_embeds.size();
+    const uint32_t n_embd = hparams_.embedding_length;
+    const uint32_t n_embd_per_layer = hparams_.embedding_length_per_layer;
+    const uint32_t n_layer = hparams_.block_count;
+
+    const float per_layer_projection_scale = 1.0f / std::sqrt((float)n_embd);
+    const float per_layer_input_scale = 1.0f / std::sqrt(2.0f);
+
+    tensor_3 projected; // [tokens][layer][embd_per_layer]
+    projected.reserve(n_tokens);
+
+    for (size_t t = 0; t < n_tokens; ++t) {
+        tensor_1 proj_out(per_layer_model_proj_weight_->shape[1]);
+        mat_vec_mul(proj_out, *per_layer_model_proj_weight_, gguf_file_, inputs_embeds[t]);
+        
+        // Scale
+        for (float& val : proj_out) val *= per_layer_projection_scale;
+
+        // Reshape proj_out [n_embd_per_layer * n_layer] to [n_layer][n_embd_per_layer]
+        tensor_2 layer_projs;
+        layer_projs.reserve(n_layer);
+        for (uint32_t l = 0; l < n_layer; ++l) {
+            tensor_1 layer_proj(n_embd_per_layer);
+            for (uint32_t i = 0; i < n_embd_per_layer; ++i) {
+                layer_proj[i] = proj_out[l * n_embd_per_layer + i];
+            }
+            layer_projs.push_back(layer_proj);
+        }
+        projected.push_back(layer_projs);
+    }
+
+    // Now RMSNorm projected [tokens][layer][embd_per_layer] over embd_per_layer
+    // per_layer_proj_norm is [n_embd_per_layer]? Wait, llama.cpp says -1 which usually means shared over non-channel dims.
+    // In gemma4-iswa.cpp:
+    // per_layer_proj = build_norm(per_layer_proj, model.per_layer_proj_norm, nullptr, LLM_NORM_RMS, -1);
+    // This norm weight is [n_embd_per_layer].
+    
+    tensor_1 norm_weight(n_embd_per_layer);
+    gguf_file_.read_tensor_data(*per_layer_proj_norm_weight_, norm_weight.data(), n_embd_per_layer * sizeof(float));
+
+    for (size_t t = 0; t < n_tokens; ++t) {
+        for (size_t l = 0; l < n_layer; ++l) {
+            tensor_1 normalized_x(n_embd_per_layer);
+            rms_norm(normalized_x, projected[t][l], hparams_.f_norm_rms_eps);
+            for (size_t i = 0; i < n_embd_per_layer; ++i) {
+                float val = (normalized_x[i] * norm_weight[i] + inp_per_layer[t][l][i]) * per_layer_input_scale;
+                inp_per_layer[t][l][i] = val;
+            }
+        }
+    }
+
+    return inp_per_layer;
+}
+
 tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
   LOG_VERBOSE("Starting forward pass.");
 
@@ -465,10 +664,22 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
   scale_embeddings(hidden_states);
   VERBOSE(print_tensor(hidden_states, "inp_scaled"));
 
-  // Transformer blocks
+  tensor_3 inp_per_layer;
+  if (token_embd_per_layer_weight_) {
+      inp_per_layer = get_per_layer_inputs(tokens);
+      inp_per_layer = project_per_layer_inputs(hidden_states, inp_per_layer);
+  }
+
+    // Transformer blocks
   for (size_t i = 0; i < layers_.size(); ++i) {
-    size_t swa_n_pattern = 6;
-    bool is_swa = i % swa_n_pattern < (swa_n_pattern - 1);
+    bool is_swa = false;
+    if (i < hparams_.swa_layers.size()) {
+        is_swa = hparams_.swa_layers[i];
+    } else {
+        size_t swa_n_pattern = 6;
+        is_swa = i % swa_n_pattern < (swa_n_pattern - 1);
+    }
+
     // Gemma will use a different freq_base depending on the layer.
     float this_rope_freq_base = is_swa ? 10000 : hparams_.rope_freq_base;
     auto& layer = layers_[i];
@@ -483,7 +694,8 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     if (n_tokens == 0) {
       return {};
     }
-    uint32_t n_embd_head = hparams_.n_embd_head_k;
+    uint32_t n_embd_head_k = is_swa ? hparams_.n_embd_head_k_swa : hparams_.n_embd_head_k;
+    uint32_t n_embd_head_v = is_swa ? hparams_.n_embd_head_v_swa : hparams_.n_embd_head_v;
 
     // Q
     tensor_2 q_vectors;
@@ -493,15 +705,17 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
       q_vectors.push_back(q);
     }
     VERBOSE(print_tensor(q_vectors, "Qcur-" + std::to_string(i)));
-    tensor_3 q_reshaped = reshape_3d(q_vectors, n_tokens, n_head, n_embd_head);
+    tensor_3 q_reshaped = reshape_3d(q_vectors, n_tokens, n_head, n_embd_head_k);
     VERBOSE(
         print_tensor(q_reshaped, "Qcur-" + std::to_string(i) + " (reshaped)"));
     tensor_3 q_cur = run_norm(q_reshaped, layer.attn_q_norm_weight, i);
     VERBOSE(print_tensor(q_cur, "Qcur_normed-" + std::to_string(i)));
-    rope(q_cur, n_embd_head, this_rope_freq_base, hparams_.rope_freq_scale,
+    rope(q_cur, n_embd_head_k, this_rope_freq_base, hparams_.rope_freq_scale,
          pos);
     VERBOSE(print_tensor(q_cur, "Qcur-" + std::to_string(i) + " (post rope)"));
-    scale(q_cur, hparams_.f_attention_scale);
+    // scale(q_cur, hparams_.f_attention_scale); // Wait, scale is usually 1/sqrt(head_size)
+    float this_attention_scale = 1.0f / std::sqrt(float(n_embd_head_k));
+    scale(q_cur, this_attention_scale);
     VERBOSE(
         print_tensor(q_cur, "node_9-" + std::to_string(i) + " (post scale)"));
 
@@ -514,12 +728,12 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     }
     VERBOSE(print_tensor(k_vectors, "Kcur-" + std::to_string(i)));
     tensor_3 k_reshaped =
-        reshape_3d(k_vectors, n_tokens, n_head_kv, n_embd_head);
+        reshape_3d(k_vectors, n_tokens, n_head_kv, n_embd_head_k);
     VERBOSE(
         print_tensor(k_reshaped, "Kcur-" + std::to_string(i) + " (reshaped)"));
     tensor_3 k_cur = run_norm(k_reshaped, layer.attn_k_norm_weight, i);
     VERBOSE(print_tensor(k_cur, "Kcur_normed-" + std::to_string(i)));
-    rope(k_cur, n_embd_head, this_rope_freq_base, hparams_.rope_freq_scale,
+    rope(k_cur, n_embd_head_k, this_rope_freq_base, hparams_.rope_freq_scale,
          pos);
     VERBOSE(print_tensor(k_cur, "Kcur-" + std::to_string(i) + " (post rope)"));
 
@@ -531,16 +745,29 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
       v_vectors.push_back(v);
     }
     VERBOSE(print_tensor(v_vectors, "Vcur-" + std::to_string(i)));
-    tensor_3 v_reshaped =
-        reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head);
+    
+    tensor_3 v_heads;
+    if (hparams_.architecture == "gemma4") {
+        // Gemma 4 RMSNorm on V
+        tensor_2 v_normed;
+        v_normed.reserve(n_tokens);
+        for (const auto& v_vec : v_vectors) {
+            tensor_1 normalized_v(v_vec.size());
+            rms_norm(normalized_v, v_vec, hparams_.f_norm_rms_eps);
+            v_normed.push_back(normalized_v);
+        }
+        v_heads = reshape_3d(v_normed, n_tokens, n_head_kv, n_embd_head_v);
+    } else {
+        v_heads = reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head_v);
+    }
     VERBOSE(
-        print_tensor(v_reshaped, "Vcur-" + std::to_string(i) + " (reshaped)"));
+        print_tensor(v_heads, "Vcur-" + std::to_string(i) + " (reshaped)"));
 
     // Note: run_attn still needs dequantized output_weights for now
     // TODO: Optimize run_attn to use Q4_0 directly
     tensor_2 attention_results =
         run_attn(kv_cache_[i], layer.attn_output_weight, q_cur, k_cur,
-                 v_reshaped, n_head, n_head_kv, n_embd_head, i, pos);
+                 v_heads, n_head, n_head_kv, n_embd_head_v, i, pos);
 
     if (layer.post_attention_norm_weight) {
       attention_results =
@@ -584,8 +811,8 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     VERBOSE(print_tensor(ffn_gate_outputs, "ffn_gate-" + std::to_string(i)));
     VERBOSE(print_tensor(ffn_up_outputs, "ffn_up-" + std::to_string(i)));
 
-    tensor_2 all_ffn_hidden_outputs;
-    all_ffn_hidden_outputs.reserve(normalized_states2.size());
+    tensor_2 ffn_gate_up_combined;
+    ffn_gate_up_combined.reserve(normalized_states2.size());
     for (size_t token_idx = 0; token_idx < normalized_states2.size();
          ++token_idx) {
       const tensor_1& ffn_gate_output = ffn_gate_outputs[token_idx];
@@ -599,14 +826,14 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
             (1.0f + tanhf(sqrtf(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
         ffn_hidden[j] = gelu_x * ffn_up_output[j];
       }
-      all_ffn_hidden_outputs.push_back(ffn_hidden);
+      ffn_gate_up_combined.push_back(ffn_hidden);
     }
     VERBOSE(
-        print_tensor(all_ffn_hidden_outputs, "ffn_geglu-" + std::to_string(i)));
+        print_tensor(ffn_gate_up_combined, "ffn_geglu-" + std::to_string(i)));
 
     tensor_2 ffn_outputs;
     ffn_outputs.reserve(normalized_states2.size());
-    for (const auto& ffn_hidden_val : all_ffn_hidden_outputs) {
+    for (const auto& ffn_hidden_val : ffn_gate_up_combined) {
       tensor_1 ffn_output(layer.ffn_down_weight->shape[1]);
       mat_vec_mul(ffn_output, *layer.ffn_down_weight, gguf_file_,
                   ffn_hidden_val);
@@ -616,13 +843,58 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
     if (layer.post_ffw_norm_weight) {
       ffn_outputs = run_norm(ffn_outputs, layer.post_ffw_norm_weight, i);
+      VERBOSE(print_tensor(ffn_outputs, "ffn_post_norm-" + std::to_string(i)));
     }
-    VERBOSE(print_tensor(ffn_outputs, "ffn_post_norm-" + std::to_string(i)));
 
     for (size_t j = 0; j < hidden_states.size(); ++j) {
       for (size_t k = 0; k < hidden_states[j].size(); ++k) {
         hidden_states[j][k] += ffn_outputs[j][k];
       }
+    }
+
+    // Per-layer embedding
+    if (!inp_per_layer.empty()) {
+        VERBOSE(print_tensor(hidden_states, "pe_in-" + std::to_string(i)));
+        for (size_t token_idx = 0; token_idx < n_tokens; ++token_idx) {
+            tensor_1 gate_out(layer.per_layer_inp_gate_weight->shape[1]);
+            mat_vec_mul(gate_out, *layer.per_layer_inp_gate_weight, gguf_file_, hidden_states[token_idx]);
+            
+            // GELU
+            for (float& x : gate_out) {
+                x = 0.5f * x * (1.0f + tanhf(sqrtf(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
+            }
+
+            // Mul with inp_per_layer
+            for (size_t j = 0; j < gate_out.size(); ++j) {
+                gate_out[j] *= inp_per_layer[token_idx][i][j];
+            }
+
+            // Proj
+            tensor_1 proj_out(layer.per_layer_proj_weight->shape[1]);
+            mat_vec_mul(proj_out, *layer.per_layer_proj_weight, gguf_file_, gate_out);
+
+            // Post norm
+            tensor_1 normalized_proj(proj_out.size());
+            rms_norm(normalized_proj, proj_out, hparams_.f_norm_rms_eps);
+            
+            tensor_1 norm_weight(layer.per_layer_post_norm_weight->shape[0]);
+            gguf_file_.read_tensor_data(*layer.per_layer_post_norm_weight, norm_weight.data(), norm_weight.size() * sizeof(float));
+
+            for (size_t j = 0; j < hidden_states[token_idx].size(); ++j) {
+                hidden_states[token_idx][j] += normalized_proj[j] * norm_weight[j];
+            }
+        }
+        VERBOSE(print_tensor(hidden_states, "per_layer_embd_out-" + std::to_string(i)));
+    }
+
+    // layer_scalar (out_scale)
+    if (layer.out_scale_weight) {
+        float out_scale;
+        gguf_file_.read_tensor_data(*layer.out_scale_weight, &out_scale, sizeof(float));
+        for (auto& state : hidden_states) {
+            for (float& val : state) val *= out_scale;
+        }
+        VERBOSE(print_tensor(hidden_states, "out_scaled-" + std::to_string(i)));
     }
 
     VERBOSE(print_tensor(hidden_states, "l_out-" + std::to_string(i)));
@@ -635,6 +907,9 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
       run_norm(last_hidden_state, output_norm_weight());
 
   VERBOSE(print_tensor(final_normalized_x, "result_norm"));
+
+  // Output logits
+
 
   // Output logits
   const auto& token_embd_weight_tensor = *token_embd_weight();
@@ -678,6 +953,13 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
         << "Error: forward: Unsupported token embedding tensor type for logits."
         << std::endl;
     exit(1);
+  }
+
+  if (hparams_.final_logit_softcap > 0.0f) {
+    for (float& logit : logits) {
+      logit = hparams_.final_logit_softcap *
+              tanhf(logit / hparams_.final_logit_softcap);
+    }
   }
 
   tensor_2 result;

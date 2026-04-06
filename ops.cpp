@@ -908,6 +908,9 @@ void mat_vec_mul_q5_0(std::vector<float>& o, const TensorInfo& w_tensor,
 
 void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
                  const GGUFFile& gguf_file, const std::vector<float>& x) {
+  if (x.size() != w_tensor.shape[0]) {
+    std::cerr << "mat_vec_mul size mismatch: tensor: " << w_tensor.name << " w_tensor.shape[0]=" << w_tensor.shape[0] << " x.size()=" << x.size() << std::endl;
+  }
   if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q4_0) {
     mat_vec_mul_q4_0(o, w_tensor, gguf_file, x);
   } else if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q4_K) {

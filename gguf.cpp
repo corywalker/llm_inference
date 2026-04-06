@@ -363,9 +363,30 @@ std::string tensorTypeToString(uint32_t type) {
       return "F16";
     case GGUFTensorType::Q4_0:
       return "Q4_0";
-    // ... other types ...
+    case GGUFTensorType::Q4_1:
+      return "Q4_1";
+    case GGUFTensorType::Q5_0:
+      return "Q5_0";
+    case GGUFTensorType::Q5_1:
+      return "Q5_1";
+    case GGUFTensorType::Q8_0:
+      return "Q8_0";
+    case GGUFTensorType::Q8_1:
+      return "Q8_1";
+    case GGUFTensorType::Q2_K:
+      return "Q2_K";
+    case GGUFTensorType::Q3_K:
+      return "Q3_K";
+    case GGUFTensorType::Q4_K:
+      return "Q4_K";
+    case GGUFTensorType::Q5_K:
+      return "Q5_K";
+    case GGUFTensorType::Q6_K:
+      return "Q6_K";
+    case GGUFTensorType::Q8_K:
+      return "Q8_K";
     default:
-      return "UNKNOWN";
+      return "UNKNOWN (" + std::to_string(type) + ")";
   }
 }
 

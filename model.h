@@ -20,6 +20,7 @@ using KVCache = std::vector<KVCacheLayer>;
  * @brief Hyperparameters for the model.
  */
 struct ModelHParams {
+  std::string architecture;
   uint32_t block_count;
   uint32_t embedding_length;
   uint32_t feed_forward_length;
@@ -29,9 +30,15 @@ struct ModelHParams {
   float rope_freq_base;
   float rope_freq_scale;
   uint32_t n_embd_head_k;
+  uint32_t n_embd_head_k_swa;
+  uint32_t n_embd_head_v;
+  uint32_t n_embd_head_v_swa;
   float f_attention_scale;
   float f_max_alibi_bias;
   float attn_soft_cap;
+  std::vector<bool> swa_layers;
+  float final_logit_softcap;
+  uint32_t embedding_length_per_layer;
 };
 
 /**
@@ -52,6 +59,10 @@ struct TransformerLayer {
   TensorInfo* post_ffw_norm_weight;
   TensorInfo* attn_k_norm_weight;
   TensorInfo* attn_q_norm_weight;
+  TensorInfo* out_scale_weight;
+  TensorInfo* per_layer_inp_gate_weight;
+  TensorInfo* per_layer_proj_weight;
+  TensorInfo* per_layer_post_norm_weight;
 };
 
 /**
@@ -110,6 +121,9 @@ class Model {
                     int layer_id);
   tensor_3 run_norm(const tensor_3& input, const TensorInfo* norm_weight,
                     int layer_id);
+  tensor_3 get_per_layer_inputs(const std::vector<int>& tokens);
+  tensor_3 project_per_layer_inputs(const tensor_2& inputs_embeds,
+                                   tensor_3& inp_per_layer);
   tensor_2 run_attn(KVCacheLayer& kv_cache, const TensorInfo* output_weights,
                     const tensor_3& q_heads, const tensor_3& k_heads,
                     const tensor_3& v_heads, uint32_t n_head,
@@ -120,6 +134,9 @@ class Model {
   std::vector<TransformerLayer> layers_;
   TensorInfo* token_embd_weight_;
   TensorInfo* output_norm_weight_;
+  TensorInfo* token_embd_per_layer_weight_;
+  TensorInfo* per_layer_model_proj_weight_;
+  TensorInfo* per_layer_proj_norm_weight_;
   GGUFFile& gguf_file_;
   KVCache kv_cache_;
   std::vector<uint16_t> token_embd_weight_f16_;
