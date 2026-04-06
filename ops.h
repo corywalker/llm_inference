@@ -5,6 +5,23 @@
 
 #include "tensor.h"
 
+#define QK_K 256
+#define K_SCALE_SIZE 12
+
+struct block_q4_K {
+    uint16_t d;    // super-block scale for quantized scales
+    uint16_t dmin; // super-block scale for quantized mins
+    uint8_t scales[K_SCALE_SIZE]; // scales and mins, quantized with 6 bits
+    uint8_t qs[QK_K/2];           // 4-bit quants
+};
+
+struct block_q6_K {
+    uint8_t ql[QK_K/2];      // quants, lower 4 bits
+    uint8_t qh[QK_K/4];      // quants, upper 2 bits
+    int8_t  scales[QK_K/16]; // scales, quantized with 8 bits
+    uint16_t d;              // super-block scale
+};
+
 // Forward declarations
 struct TensorInfo;
 class GGUFFile;
@@ -22,11 +39,23 @@ void vec_scale_f16(tensor_f16_1& y, float v);
 void vec_mad_f16(tensor_f16_1& y, const tensor_f16_1& x, float v);
 
 // Quantized matrix-vector multiplication: o = w_q4 * x
-// w_tensor contains Q4_0 quantized weights (stored in GGUF file)
+// w_tensor contains quantized weights (stored in GGUF file)
 // x is F32 input vector
 // o is F32 output vector
+void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
+                 const GGUFFile& gguf_file, const std::vector<float>& x);
+
 void mat_vec_mul_q4_0(std::vector<float>& o, const TensorInfo& w_tensor,
                       const GGUFFile& gguf_file, const std::vector<float>& x);
+
+// Quantized matrix-vector multiplication for Q4_K and Q6_K weights
+void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x);
+
+void mat_vec_mul_q6_k(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x);
+
+void dequantize_q6_k_row(std::vector<float>& o, const uint8_t* block_ptr, size_t n_cols);
 
 // Misc operations.
 void rms_norm(std::vector<float>& o, const std::vector<float>& x, double eps);

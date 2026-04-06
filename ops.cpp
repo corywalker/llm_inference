@@ -572,6 +572,207 @@ void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
   for (auto&& result : results) result.get();
 }
 
+void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x) {
+  const size_t n_rows = w_tensor.shape[1];
+  const size_t n_cols = w_tensor.shape[0];
+
+  if (x.size() != n_cols) {
+    throw std::runtime_error("mat_vec_mul_q4_k: input vector size mismatch");
+  }
+
+  o.resize(n_rows);
+
+  const size_t bytes_per_block = sizeof(block_q4_K);
+  const size_t blocks_per_row = n_cols / QK_K;
+  const uint8_t* w_data = gguf_file.get_tensor_data(w_tensor);
+
+  auto get_scale_min_k4 = [](int j, const uint8_t* q, uint8_t* d, uint8_t* m) {
+    if (j < 4) {
+      *d = q[j] & 63;
+      *m = q[j + 4] & 63;
+    } else {
+      *d = (q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4);
+      *m = (q[j + 4] >> 4) | ((q[j - 0] >> 6) << 4);
+    }
+  };
+
+  auto compute_range = [&](size_t start_row, size_t end_row) {
+    for (size_t row = start_row; row < end_row; ++row) {
+      float sum = 0.0f;
+      size_t col = 0;
+
+      for (size_t block = 0; block < blocks_per_row; ++block) {
+        const uint8_t* block_ptr =
+            w_data + (row * blocks_per_row + block) * bytes_per_block;
+        const block_q4_K* q4k = reinterpret_cast<const block_q4_K*>(block_ptr);
+
+        const float d = f16_to_f32(q4k->d);
+        const float min = f16_to_f32(q4k->dmin);
+
+        const uint8_t* q = q4k->qs;
+        int is = 0;
+        uint8_t sc, m;
+        for (int j = 0; j < QK_K; j += 64) {
+          get_scale_min_k4(is + 0, q4k->scales, &sc, &m);
+          const float d1 = d * sc;
+          const float m1 = min * m;
+          get_scale_min_k4(is + 1, q4k->scales, &sc, &m);
+          const float d2 = d * sc;
+          const float m2 = min * m;
+
+          for (int l = 0; l < 32; ++l) {
+            float w_val = d1 * (q[l] & 0xF) - m1;
+            sum += w_val * x[col++];
+          }
+          for (int l = 0; l < 32; ++l) {
+            float w_val = d2 * (q[l] >> 4) - m2;
+            sum += w_val * x[col++];
+          }
+          q += 32;
+          is += 2;
+        }
+      }
+      o[row] = sum;
+    }
+  };
+
+  std::vector<std::future<void>> results;
+  size_t num_threads = g_n_threads;
+  size_t chunk_size = (n_rows + num_threads - 1) / num_threads;
+
+  for (size_t i = 0; i < num_threads; ++i) {
+    size_t start = i * chunk_size;
+    size_t end = std::min(start + chunk_size, n_rows);
+    if (start >= end) break;
+    results.emplace_back(pool->enqueue(compute_range, start, end));
+  }
+
+  for (auto&& result : results) result.get();
+}
+
+void mat_vec_mul_q6_k(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x) {
+  const size_t n_rows = w_tensor.shape[1];
+  const size_t n_cols = w_tensor.shape[0];
+
+  if (x.size() != n_cols) {
+    throw std::runtime_error("mat_vec_mul_q6_k: input vector size mismatch");
+  }
+
+  o.resize(n_rows);
+
+  const size_t bytes_per_block = sizeof(block_q6_K);
+  const size_t blocks_per_row = n_cols / QK_K;
+  const uint8_t* w_data = gguf_file.get_tensor_data(w_tensor);
+
+  auto compute_range = [&](size_t start_row, size_t end_row) {
+    for (size_t row = start_row; row < end_row; ++row) {
+      float sum = 0.0f;
+      size_t col = 0;
+
+      for (size_t block = 0; block < blocks_per_row; ++block) {
+        const uint8_t* block_ptr =
+            w_data + (row * blocks_per_row + block) * bytes_per_block;
+        const block_q6_K* q6k = reinterpret_cast<const block_q6_K*>(block_ptr);
+
+        const float d = f16_to_f32(q6k->d);
+        const uint8_t* ql = q6k->ql;
+        const uint8_t* qh = q6k->qh;
+        const int8_t* sc = q6k->scales;
+
+        for (int n = 0; n < QK_K; n += 128) {
+          for (int l = 0; l < 32; ++l) {
+            int is = l / 16;
+            const int8_t q1 =
+                (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+            const int8_t q2 =
+                (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+            const int8_t q3 =
+                (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+            const int8_t q4 =
+                (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+
+            sum += d * sc[is + 0] * q1 * x[col + l + 0];
+            sum += d * sc[is + 2] * q2 * x[col + l + 32];
+            sum += d * sc[is + 4] * q3 * x[col + l + 64];
+            sum += d * sc[is + 6] * q4 * x[col + l + 96];
+          }
+          col += 128;
+          ql += 64;
+          qh += 32;
+          sc += 8;
+        }
+      }
+      o[row] = sum;
+    }
+  };
+
+  std::vector<std::future<void>> results;
+  size_t num_threads = g_n_threads;
+  size_t chunk_size = (n_rows + num_threads - 1) / num_threads;
+
+  for (size_t i = 0; i < num_threads; ++i) {
+    size_t start = i * chunk_size;
+    size_t end = std::min(start + chunk_size, n_rows);
+    if (start >= end) break;
+    results.emplace_back(pool->enqueue(compute_range, start, end));
+  }
+
+  for (auto&& result : results) result.get();
+}
+
+void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
+                 const GGUFFile& gguf_file, const std::vector<float>& x) {
+  if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q4_0) {
+    mat_vec_mul_q4_0(o, w_tensor, gguf_file, x);
+  } else if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q4_K) {
+    mat_vec_mul_q4_k(o, w_tensor, gguf_file, x);
+  } else if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q6_K) {
+    mat_vec_mul_q6_k(o, w_tensor, gguf_file, x);
+  } else {
+    throw std::runtime_error("mat_vec_mul: unsupported tensor type ");
+  }
+}
+
+void dequantize_q6_k_row(std::vector<float>& o, const uint8_t* block_ptr, size_t n_cols) {
+  o.resize(n_cols);
+  const size_t bytes_per_block = sizeof(block_q6_K);
+  size_t blocks_per_row = n_cols / QK_K;
+  
+  size_t col = 0;
+  for (size_t block = 0; block < blocks_per_row; ++block) {
+    const block_q6_K* q6k = reinterpret_cast<const block_q6_K*>(block_ptr + block * bytes_per_block);
+    const float d = f16_to_f32(q6k->d);
+    const uint8_t* ql = q6k->ql;
+    const uint8_t* qh = q6k->qh;
+    const int8_t* sc = q6k->scales;
+
+    for (int n = 0; n < QK_K; n += 128) {
+      for (int l = 0; l < 32; ++l) {
+        int is = l / 16;
+        const int8_t q1 =
+            (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+        const int8_t q2 =
+            (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+        const int8_t q3 =
+            (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+        const int8_t q4 =
+            (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+
+        o[col + l + 0] = d * sc[is + 0] * q1;
+        o[col + l + 32] = d * sc[is + 2] * q2;
+        o[col + l + 64] = d * sc[is + 4] * q3;
+        o[col + l + 96] = d * sc[is + 6] * q4;
+      }
+      col += 128;
+      ql += 64;
+      qh += 32;
+      sc += 8;
+    }
+  }
+}
+
 void vec_scale_f16(tensor_f16_1& y, float v) {
   for (size_t i = 0; i < y.size(); ++i) {
     float val = f16_to_f32(y[i]);
