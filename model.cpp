@@ -171,22 +171,23 @@ tensor_2 Model::embed_tokens(const std::vector<int>& tokens) {
     const size_t bytes_per_block = sizeof(block_q6_K);
     const size_t blocks_per_row = embedding_length / QK_K;
     const size_t bytes_per_row = blocks_per_row * bytes_per_block;
-    
+
     std::vector<uint8_t> embedding_row_q6k(bytes_per_row);
-    
+
     for (int token : tokens) {
       gguf_file_.read_tensor_data_region(
-          token_embd_tensor, token * bytes_per_row,
-          embedding_row_q6k.data(), bytes_per_row);
+          token_embd_tensor, token * bytes_per_row, embedding_row_q6k.data(),
+          bytes_per_row);
 
       tensor_1 embedding_vector;
-      dequantize_q6_k_row(embedding_vector, embedding_row_q6k.data(), embedding_length);
+      dequantize_q6_k_row(embedding_vector, embedding_row_q6k.data(),
+                          embedding_length);
       embeddings.push_back(embedding_vector);
     }
   } else {
     std::cerr << "Error: embed_tokens: Unsupported token embedding "
-                 "tensor type: " << token_embd_tensor.tensor_type
-              << std::endl;
+                 "tensor type: "
+              << token_embd_tensor.tensor_type << std::endl;
     exit(1);
     // Handle other types later
   }
@@ -411,7 +412,7 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
   for (const auto& concatenated_head_results : kqv_out) {
     tensor_1 token_result(output_weights->shape[1]);
     mat_vec_mul(token_result, *output_weights, gguf_file_,
-                     concatenated_head_results);
+                concatenated_head_results);
     all_attention_results.push_back(token_result);
   }
   VERBOSE(print_tensor(all_attention_results,
@@ -540,9 +541,9 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
       tensor_1 ffn_gate_output(layer.ffn_gate_weight->shape[1]);
       tensor_1 ffn_up_output(layer.ffn_up_weight->shape[1]);
       mat_vec_mul(ffn_gate_output, *layer.ffn_gate_weight, gguf_file_,
-                       normalized_x2);
+                  normalized_x2);
       mat_vec_mul(ffn_up_output, *layer.ffn_up_weight, gguf_file_,
-                       normalized_x2);
+                  normalized_x2);
       ffn_gate_outputs.push_back(ffn_gate_output);
       ffn_up_outputs.push_back(ffn_up_output);
     }
@@ -574,7 +575,7 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     for (const auto& ffn_hidden_val : all_ffn_hidden_outputs) {
       tensor_1 ffn_output(layer.ffn_down_weight->shape[1]);
       mat_vec_mul(ffn_output, *layer.ffn_down_weight, gguf_file_,
-                       ffn_hidden_val);
+                  ffn_hidden_val);
       ffn_outputs.push_back(ffn_output);
     }
     VERBOSE(print_tensor(ffn_outputs, "ffn_out-" + std::to_string(i)));
@@ -628,8 +629,10 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
       }
       logits[token] = logit;
     }
-  } else if (token_embd_weight_tensor.tensor_type == (uint32_t)GGUFTensorType::Q6_K ||
-             token_embd_weight_tensor.tensor_type == (uint32_t)GGUFTensorType::Q4_K) {
+  } else if (token_embd_weight_tensor.tensor_type ==
+                 (uint32_t)GGUFTensorType::Q6_K ||
+             token_embd_weight_tensor.tensor_type ==
+                 (uint32_t)GGUFTensorType::Q4_K) {
     mat_vec_mul(logits, token_embd_weight_tensor, gguf_file_,
                 final_normalized_x);
   } else {

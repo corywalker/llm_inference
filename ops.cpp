@@ -621,6 +621,51 @@ void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
           const float d2 = d * sc;
           const float m2 = min * m;
 
+#if defined(__aarch64__) || defined(__arm64__)
+          float32x4_t m1v = vdupq_n_f32(m1);
+          float32x4_t d1v = vdupq_n_f32(d1);
+          float32x4_t m2v = vdupq_n_f32(m2);
+          float32x4_t d2v = vdupq_n_f32(d2);
+
+          float32x4_t accv = vdupq_n_f32(0.0f);
+
+          const uint8_t* q_ptr = q;
+          const float* x_ptr = &x[col];
+
+          for (int l = 0; l < 32; l += 8) {
+            uint8x8_t q8 = vld1_u8(q_ptr + l);
+            uint8x8_t q_lo = vand_u8(q8, vdup_n_u8(0xF));
+            uint8x8_t q_hi = vshrn_n_u16(vmovl_u8(q8), 4);
+
+            // Row 1 (low nibbles)
+            uint16x8_t l16 = vmovl_u8(q_lo);
+            float32x4_t f_lo0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(l16)));
+            float32x4_t f_lo1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(l16)));
+
+            float32x4_t x_lo0 = vld1q_f32(x_ptr + l);
+            float32x4_t x_lo1 = vld1q_f32(x_ptr + l + 4);
+
+            accv =
+                vfmaq_f32(accv, x_lo0, vsubq_f32(vmulq_f32(f_lo0, d1v), m1v));
+            accv =
+                vfmaq_f32(accv, x_lo1, vsubq_f32(vmulq_f32(f_lo1, d1v), m1v));
+
+            // Row 2 (high nibbles)
+            uint16x8_t h16 = vmovl_u8(q_hi);
+            float32x4_t f_hi0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(h16)));
+            float32x4_t f_hi1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(h16)));
+
+            float32x4_t x_hi0 = vld1q_f32(x_ptr + 32 + l);
+            float32x4_t x_hi1 = vld1q_f32(x_ptr + 32 + l + 4);
+
+            accv =
+                vfmaq_f32(accv, x_hi0, vsubq_f32(vmulq_f32(f_hi0, d2v), m2v));
+            accv =
+                vfmaq_f32(accv, x_hi1, vsubq_f32(vmulq_f32(f_hi1, d2v), m2v));
+          }
+          sum += vaddvq_f32(accv);
+          col += 64;
+#else
           for (int l = 0; l < 32; ++l) {
             float w_val = d1 * (q[l] & 0xF) - m1;
             sum += w_val * x[col++];
@@ -629,6 +674,7 @@ void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
             float w_val = d2 * (q[l] >> 4) - m2;
             sum += w_val * x[col++];
           }
+#endif
           q += 32;
           is += 2;
         }
@@ -682,6 +728,35 @@ void mat_vec_mul_q6_k(std::vector<float>& o, const TensorInfo& w_tensor,
         const int8_t* sc = q6k->scales;
 
         for (int n = 0; n < QK_K; n += 128) {
+#if defined(__aarch64__) || defined(__arm64__)
+          for (int l = 0; l < 32; l += 16) {
+            for (int l_inner = 0; l_inner < 16; ++l_inner) {
+              int is = (l + l_inner) / 16;
+              const uint8_t qh_val = qh[l + l_inner];
+              const int8_t q1 = (int8_t)((ql[l + l_inner + 0] & 0xF) |
+                                         (((qh_val >> 0) & 3) << 4)) -
+                                32;
+              const int8_t q2 = (int8_t)((ql[l + l_inner + 32] & 0xF) |
+                                         (((qh_val >> 2) & 3) << 4)) -
+                                32;
+              const int8_t q3 = (int8_t)((ql[l + l_inner + 0] >> 4) |
+                                         (((qh_val >> 4) & 3) << 4)) -
+                                32;
+              const int8_t q4 = (int8_t)((ql[l + l_inner + 32] >> 4) |
+                                         (((qh_val >> 6) & 3) << 4)) -
+                                32;
+
+              sum += d * sc[is + 0] * q1 * x[col + l + l_inner + 0];
+              sum += d * sc[is + 2] * q2 * x[col + l + l_inner + 32];
+              sum += d * sc[is + 4] * q3 * x[col + l + l_inner + 64];
+              sum += d * sc[is + 6] * q4 * x[col + l + l_inner + 96];
+            }
+          }
+          col += 128;
+          ql += 64;
+          qh += 32;
+          sc += 8;
+#else
           for (int l = 0; l < 32; ++l) {
             int is = l / 16;
             const int8_t q1 =
@@ -702,6 +777,7 @@ void mat_vec_mul_q6_k(std::vector<float>& o, const TensorInfo& w_tensor,
           ql += 64;
           qh += 32;
           sc += 8;
+#endif
         }
       }
       o[row] = sum;
@@ -735,14 +811,16 @@ void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
   }
 }
 
-void dequantize_q6_k_row(std::vector<float>& o, const uint8_t* block_ptr, size_t n_cols) {
+void dequantize_q6_k_row(std::vector<float>& o, const uint8_t* block_ptr,
+                         size_t n_cols) {
   o.resize(n_cols);
   const size_t bytes_per_block = sizeof(block_q6_K);
   size_t blocks_per_row = n_cols / QK_K;
-  
+
   size_t col = 0;
   for (size_t block = 0; block < blocks_per_row; ++block) {
-    const block_q6_K* q6k = reinterpret_cast<const block_q6_K*>(block_ptr + block * bytes_per_block);
+    const block_q6_K* q6k = reinterpret_cast<const block_q6_K*>(
+        block_ptr + block * bytes_per_block);
     const float d = f16_to_f32(q6k->d);
     const uint8_t* ql = q6k->ql;
     const uint8_t* qh = q6k->qh;
