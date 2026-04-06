@@ -1013,11 +1013,8 @@ void Model::load_vocabulary() {
 std::vector<int> Model::tokenize(const std::string& prompt,
                                  bool apply_chat_template) {
   std::vector<int> tokens;
-  if (bos_token_id != -1) {
+  if (bos_token_id != -1 && hparams_.architecture != "gemma4") {
     tokens.push_back(bos_token_id);
-  } else {
-    std::cerr << "Warning: BOS token not found. Not adding BOS token."
-              << std::endl;
   }
 
   std::string processed_prompt;
@@ -1028,7 +1025,11 @@ std::vector<int> Model::tokenize(const std::string& prompt,
     processed_prompt = "<start_of_turn>user\n" + prompt +
                        "<end_of_turn>\n<start_of_turn>model\n";
   } else {
-    processed_prompt = " " + prompt;
+    if (hparams_.architecture == "gemma4") {
+      processed_prompt = prompt;
+    } else {
+      processed_prompt = " " + prompt;
+    }
   }
 
   // Replace ASCII spaces with the UTF-8 "▁" (U+2581).
