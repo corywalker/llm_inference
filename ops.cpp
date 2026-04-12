@@ -798,6 +798,59 @@ void mat_vec_mul_q6_k(std::vector<float>& o, const TensorInfo& w_tensor,
   for (auto&& result : results) result.get();
 }
 
+void mat_vec_mul_q8_0(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x) {
+  const size_t n_rows = w_tensor.shape[1];
+  const size_t n_cols = w_tensor.shape[0];
+
+  if (x.size() != n_cols) {
+    throw std::runtime_error("mat_vec_mul_q8_0: input vector size mismatch");
+  }
+
+  o.resize(n_rows);
+
+  const size_t bytes_per_block = sizeof(BlockQ8_0);
+  const size_t blocks_per_row = n_cols / 32;
+  const uint8_t* w_data = gguf_file.get_tensor_data(w_tensor);
+
+  // Pre-quantize x to Q8_0 for integer dot product
+  std::vector<BlockQ8_0> x_q8_0;
+  quantize_row_q8_0(x, x_q8_0, n_cols);
+
+  auto compute_range = [&](size_t start_row, size_t end_row) {
+    for (size_t row = start_row; row < end_row; ++row) {
+      float row_sum = 0.0f;
+      const BlockQ8_0* row_w = reinterpret_cast<const BlockQ8_0*>(
+          w_data + row * blocks_per_row * bytes_per_block);
+
+      for (size_t b = 0; b < blocks_per_row; ++b) {
+        const BlockQ8_0& wb = row_w[b];
+        const BlockQ8_0& xb = x_q8_0[b];
+
+        int block_dot = 0;
+        for (int i = 0; i < 32; ++i) {
+          block_dot += wb.qs[i] * xb.qs[i];
+        }
+        row_sum += block_dot * f16_to_f32(wb.d) * f16_to_f32(xb.d);
+      }
+      o[row] = row_sum;
+    }
+  };
+
+  std::vector<std::future<void>> results;
+  size_t num_threads = g_n_threads;
+  size_t chunk_size = (n_rows + num_threads - 1) / num_threads;
+
+  for (size_t i = 0; i < num_threads; ++i) {
+    size_t start = i * chunk_size;
+    size_t end = std::min(start + chunk_size, n_rows);
+    if (start >= end) break;
+    results.emplace_back(pool->enqueue(compute_range, start, end));
+  }
+
+  for (auto&& result : results) result.get();
+}
+
 void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
                  const GGUFFile& gguf_file, const std::vector<float>& x) {
   if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q4_0) {
@@ -806,8 +859,11 @@ void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
     mat_vec_mul_q4_k(o, w_tensor, gguf_file, x);
   } else if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q6_K) {
     mat_vec_mul_q6_k(o, w_tensor, gguf_file, x);
+  } else if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q8_0) {
+    mat_vec_mul_q8_0(o, w_tensor, gguf_file, x);
   } else {
-    throw std::runtime_error("mat_vec_mul: unsupported tensor type ");
+    throw std::runtime_error("mat_vec_mul: unsupported tensor type " +
+                             std::to_string(w_tensor.tensor_type));
   }
 }
 
@@ -847,6 +903,22 @@ void dequantize_q6_k_row(std::vector<float>& o, const uint8_t* block_ptr,
       ql += 64;
       qh += 32;
       sc += 8;
+    }
+  }
+}
+
+void dequantize_q8_0_row(std::vector<float>& o, const uint8_t* block_ptr,
+                         size_t n_cols) {
+  o.resize(n_cols);
+  const size_t bytes_per_block = sizeof(BlockQ8_0);
+  size_t blocks_per_row = n_cols / 32;
+
+  for (size_t b = 0; b < blocks_per_row; ++b) {
+    const BlockQ8_0* wb =
+        reinterpret_cast<const BlockQ8_0*>(block_ptr + b * bytes_per_block);
+    float d = f16_to_f32(wb->d);
+    for (int i = 0; i < 32; ++i) {
+      o[b * 32 + i] = d * wb->qs[i];
     }
   }
 }

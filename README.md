@@ -12,7 +12,7 @@ This project is a C++ implementation for running large language model inference 
 
 ## Limitations
 
-- Q4_0 quantization only.
+- Supported quantizations: F16, Q4_0, Q4_K, Q6_K, Q8_0.
 - No repacking.
 - No multimodal support.
 - Greedy sampling only.
@@ -25,6 +25,8 @@ This project has been tested with:
 - [google/gemma-3-4b-it-qat-q4_0-gguf/blob/main/gemma-3-4b-it-q4_0.gguf](https://huggingface.co/google/gemma-3-4b-it-qat-q4_0-gguf/blob/main/gemma-3-4b-it-q4_0.gguf)
 - [google/gemma-3-12b-it-qat-q4_0-gguf/blob/main/gemma-3-12b-it-q4_0.gguf](https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-gguf/blob/main/gemma-3-12b-it-q4_0.gguf)
 - [google/gemma-3-27b-it-qat-q4_0-gguf/blob/main/gemma-3-27b-it-q4_0.gguf](https://huggingface.co/google/gemma-3-27b-it-qat-q4_0-gguf/blob/main/gemma-3-27b-it-q4_0.gguf)
+- [lmstudio-community/gemma-3-1b-it-GGUF/gemma-3-1b-it-Q8_0.gguf](https://huggingface.co/lmstudio-community/gemma-3-1b-it-GGUF/blob/main/gemma-3-1b-it-Q8_0.gguf)
+- [lmstudio-community/gemma-3-4b-it-GGUF/gemma-3-4b-it-Q4_K_M.gguf](https://huggingface.co/lmstudio-community/gemma-3-4b-it-GGUF/blob/main/gemma-3-4b-it-Q4_K_M.gguf)
 
 
 Known not working:
