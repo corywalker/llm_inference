@@ -1,9 +1,11 @@
 set -e
 
-bazel build -c opt //:llm_inference
-if [[ "$(uname)" == "Darwin" ]]; then
-    MODEL_LOC="$HOME/.cache/lm-studio/models/lmstudio-community/gemma-3-1b-it-GGUF/gemma-3-1b-it-Q4_K_M.gguf"
-else
-    MODEL_LOC=~/gemma-3-4b-it-Q4_K_M.gguf
+if [ "$#" -lt 1 ]; then
+    echo "Usage: ./run.sh <model_path> [extra_args...]"
+    exit 1
 fi
-time bazel-bin/llm_inference --model ${MODEL_LOC} "$@"
+MODEL_LOC=$1
+shift
+
+bazel build -c opt //:llm_inference
+time bazel-bin/llm_inference --model "${MODEL_LOC}" "$@"
