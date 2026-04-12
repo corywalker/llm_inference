@@ -24,9 +24,9 @@ struct block_q6_K {
 
 #pragma pack(push, 1)
 struct block_q5_0 {
-  uint16_t d;     // delta
-  uint8_t qh[4];  // 5-th bit of quants
-  uint8_t qs[16]; // low 4 bits of quants
+  uint16_t d;      // delta
+  uint8_t qh[4];   // 5-th bit of quants
+  uint8_t qs[16];  // low 4 bits of quants
 };
 #pragma pack(pop)
 

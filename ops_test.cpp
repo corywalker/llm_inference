@@ -200,3 +200,58 @@ TEST(OpsTest, MatVecMul_Q6_K) {
   // 256 elements * 1.0 = 256.0
   EXPECT_NEAR(o[0], 256.0f, 1e-3);
 }
+TEST(OpsTest, MatVecMul_Q8_0) {
+  const size_t n_cols = 32;
+  const size_t n_rows = 1;
+
+  BlockQ8_0 block;
+  memset(&block, 0, sizeof(block));
+  block.d = f32_to_f16(1.0f);
+  for (int i = 0; i < 32; ++i) block.qs[i] = 2;
+
+  std::vector<uint8_t> data(sizeof(block));
+  memcpy(data.data(), &block, sizeof(block));
+
+  auto gguf_buf =
+      create_minimal_gguf("w", {n_cols, n_rows}, GGUFTensorType::Q8_0, data);
+  GGUFFile gguf_file(gguf_buf.data(), gguf_buf.size());
+
+  std::vector<float> x(n_cols, 1.0f);
+  std::vector<float> o;
+
+  mat_vec_mul_q8_0(o, gguf_file.get_tensor_infos()[0], gguf_file, x);
+
+  ASSERT_EQ(o.size(), 1);
+  // 32 elements * (1.0 * 2) = 64.0
+  EXPECT_NEAR(o[0], 64.0f, 1e-2);
+}
+
+TEST(OpsTest, MatVecMul_Q5_0) {
+  const size_t n_cols = 32;
+  const size_t n_rows = 1;
+
+  block_q5_0 block;
+  memset(&block, 0, sizeof(block));
+  block.d = f32_to_f16(1.0f);
+  // For value 1.0: q = 17 (16 + 1)
+  // ql bits = 1 (low nibble), qh bits = 1
+  memset(block.qs, 0x11, sizeof(block.qs));
+  uint32_t qh = 0xFFFFFFFF;
+  memcpy(block.qh, &qh, 4);
+
+  std::vector<uint8_t> data(sizeof(block));
+  memcpy(data.data(), &block, sizeof(block));
+
+  auto gguf_buf =
+      create_minimal_gguf("w", {n_cols, n_rows}, GGUFTensorType::Q5_0, data);
+  GGUFFile gguf_file(gguf_buf.data(), gguf_buf.size());
+
+  std::vector<float> x(n_cols, 1.0f);
+  std::vector<float> o;
+
+  mat_vec_mul_q5_0(o, gguf_file.get_tensor_infos()[0], gguf_file, x);
+
+  ASSERT_EQ(o.size(), 1);
+  // 32 elements * 1.0 = 32.0
+  EXPECT_NEAR(o[0], 32.0f, 1e-3);
+}
