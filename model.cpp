@@ -201,6 +201,23 @@ tensor_2 Model::embed_tokens(const std::vector<int>& tokens) {
                           embedding_length);
       embeddings.push_back(embedding_vector);
     }
+  } else if (token_embd_tensor.tensor_type == (uint32_t)GGUFTensorType::Q5_0) {
+    const size_t bytes_per_block = sizeof(block_q5_0);
+    const size_t blocks_per_row = embedding_length / 32;
+    const size_t bytes_per_row = blocks_per_row * bytes_per_block;
+
+    std::vector<uint8_t> embedding_row_q5_0(bytes_per_row);
+
+    for (int token : tokens) {
+      gguf_file_.read_tensor_data_region(
+          token_embd_tensor, token * bytes_per_row, embedding_row_q5_0.data(),
+          bytes_per_row);
+
+      tensor_1 embedding_vector;
+      dequantize_q5_0_row(embedding_vector, embedding_row_q5_0.data(),
+                          embedding_length);
+      embeddings.push_back(embedding_vector);
+    }
   } else {
     std::cerr << "Error: embed_tokens: Unsupported token embedding "
                  "tensor type: "
@@ -651,7 +668,9 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
              token_embd_weight_tensor.tensor_type ==
                  (uint32_t)GGUFTensorType::Q4_K ||
              token_embd_weight_tensor.tensor_type ==
-                 (uint32_t)GGUFTensorType::Q8_0) {
+                 (uint32_t)GGUFTensorType::Q8_0 ||
+             token_embd_weight_tensor.tensor_type ==
+                 (uint32_t)GGUFTensorType::Q5_0) {
     mat_vec_mul(logits, token_embd_weight_tensor, gguf_file_,
                 final_normalized_x);
   } else {

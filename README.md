@@ -12,7 +12,7 @@ This project is a C++ implementation for running large language model inference 
 
 ## Limitations
 
-- Supported quantizations: F16, Q4_0, Q4_K, Q6_K, Q8_0.
+- Supported quantizations: F16, Q4_0, Q4_K, Q5_0, Q6_K, Q8_0.
 - No repacking.
 - No multimodal support.
 - Greedy sampling only.

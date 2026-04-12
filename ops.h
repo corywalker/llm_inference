@@ -22,6 +22,14 @@ struct block_q6_K {
   uint16_t d;                // super-block scale
 };
 
+#pragma pack(push, 1)
+struct block_q5_0 {
+  uint16_t d;     // delta
+  uint8_t qh[4];  // 5-th bit of quants
+  uint8_t qs[16]; // low 4 bits of quants
+};
+#pragma pack(pop)
+
 // Forward declarations
 struct TensorInfo;
 class GGUFFile;
@@ -56,10 +64,14 @@ void mat_vec_mul_q6_k(std::vector<float>& o, const TensorInfo& w_tensor,
                       const GGUFFile& gguf_file, const std::vector<float>& x);
 void mat_vec_mul_q8_0(std::vector<float>& o, const TensorInfo& w_tensor,
                       const GGUFFile& gguf_file, const std::vector<float>& x);
+void mat_vec_mul_q5_0(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x);
 
 void dequantize_q6_k_row(std::vector<float>& o, const uint8_t* block_ptr,
                          size_t n_cols);
 void dequantize_q8_0_row(std::vector<float>& o, const uint8_t* block_ptr,
+                         size_t n_cols);
+void dequantize_q5_0_row(std::vector<float>& o, const uint8_t* block_ptr,
                          size_t n_cols);
 
 // Misc operations.
