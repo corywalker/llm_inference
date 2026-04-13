@@ -39,6 +39,7 @@ struct ModelHParams {
   std::vector<bool> swa_layers;
   float final_logit_softcap;
   uint32_t embedding_length_per_layer;
+  int32_t n_layer_kv_from_start;
 };
 
 /**

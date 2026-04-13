@@ -114,6 +114,9 @@ void Model::load_hparams(GGUFFile& gguf_file) {
       attention_value_length_swa_value ? attention_value_length_swa_value->scalar.u32 : hparams_.n_embd_head_v;
 
   hparams_.f_attention_scale = 1.0f / std::sqrt(float(hparams_.n_embd_head_k));
+  if (arch == "gemma4") {
+      hparams_.f_attention_scale = 1.0f;
+  }
 
   const auto* max_alibi_bias_value =
       get_key(arch + ".attention.max_alibi_bias", false);
@@ -145,6 +148,13 @@ void Model::load_hparams(GGUFFile& gguf_file) {
   }
   hparams_.embedding_length_per_layer =
       embedding_length_per_layer_value ? embedding_length_per_layer_value->scalar.u32 : 0;
+
+  const auto* shared_kv_layers_value = get_key(arch + ".attention.shared_kv_layers", false);
+  if (shared_kv_layers_value) {
+      hparams_.n_layer_kv_from_start = hparams_.block_count - shared_kv_layers_value->scalar.u32;
+  } else {
+      hparams_.n_layer_kv_from_start = -1;
+  }
 }
 
 void Model::map_tensors(GGUFFile& gguf_file) {
@@ -439,15 +449,17 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
     return dst;
   };
 
-  tensor_f16_3 k_heads_f16 = to_f16_3(k_heads);
-  tensor_f16_3 v_heads_f16 = to_f16_3(v_heads);
+  if (!k_heads.empty()) {
+    tensor_f16_3 k_heads_f16 = to_f16_3(k_heads);
+    tensor_f16_3 v_heads_f16 = to_f16_3(v_heads);
 
-  if (kv_cache.k.empty()) {
-    kv_cache.k = k_heads_f16;
-    kv_cache.v = v_heads_f16;
-  } else {
-    kv_cache.k.insert(kv_cache.k.end(), k_heads_f16.begin(), k_heads_f16.end());
-    kv_cache.v.insert(kv_cache.v.end(), v_heads_f16.begin(), v_heads_f16.end());
+    if (kv_cache.k.empty()) {
+      kv_cache.k = k_heads_f16;
+      kv_cache.v = v_heads_f16;
+    } else {
+      kv_cache.k.insert(kv_cache.k.end(), k_heads_f16.begin(), k_heads_f16.end());
+      kv_cache.v.insert(kv_cache.v.end(), v_heads_f16.begin(), v_heads_f16.end());
+    }
   }
 
   tensor_2 kqv_out;
@@ -723,65 +735,77 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     rope(q_cur, n_embd_head_k, this_rope_freq_base, hparams_.rope_freq_scale,
          pos);
     VERBOSE(print_tensor(q_cur, "Qcur-" + std::to_string(i) + " (post rope)"));
-    // scale(q_cur, hparams_.f_attention_scale); // Wait, scale is usually 1/sqrt(head_size)
-    float this_attention_scale = 1.0f / std::sqrt(float(n_embd_head_k));
-    scale(q_cur, this_attention_scale);
+    scale(q_cur, hparams_.f_attention_scale);
     VERBOSE(
         print_tensor(q_cur, "node_9-" + std::to_string(i) + " (post scale)"));
 
-    // K
-    tensor_2 k_vectors;
-    for (const auto& normalized_x : normalized_states) {
-      tensor_1 k(layer.attn_k_weight->shape[1]);
-      mat_vec_mul(k, *layer.attn_k_weight, gguf_file_, normalized_x);
-      k_vectors.push_back(k);
-    }
-    VERBOSE(print_tensor(k_vectors, "Kcur-" + std::to_string(i)));
-    tensor_3 k_reshaped =
-        reshape_3d(k_vectors, n_tokens, n_head_kv, n_embd_head_k);
-    VERBOSE(
-        print_tensor(k_reshaped, "Kcur-" + std::to_string(i) + " (reshaped)"));
-    tensor_3 k_cur = run_norm(k_reshaped, layer.attn_k_norm_weight, i);
-    VERBOSE(print_tensor(k_cur, "Kcur_normed-" + std::to_string(i)));
-    rope(k_cur, n_embd_head_k, this_rope_freq_base, hparams_.rope_freq_scale,
-         pos);
-    VERBOSE(print_tensor(k_cur, "Kcur-" + std::to_string(i) + " (post rope)"));
-
-    // V
-    tensor_2 v_vectors;
-    for (const auto& normalized_x : normalized_states) {
-      tensor_1 v(layer.attn_v_weight->shape[1]);
-      mat_vec_mul(v, *layer.attn_v_weight, gguf_file_, normalized_x);
-      v_vectors.push_back(v);
-    }
-    VERBOSE(print_tensor(v_vectors, "Vcur-" + std::to_string(i)));
-    
-    tensor_3 v_reshaped = reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head_v);
-    VERBOSE(print_tensor(v_reshaped, "Vcur-" + std::to_string(i) + " (reshaped)"));
-    
+    tensor_3 k_cur;
     tensor_3 v_heads;
-    if (hparams_.architecture == "gemma4") {
-        // Gemma 4 RMSNorm on V (no weights)
-        v_heads.reserve(n_tokens);
-        for (const auto& v_token_heads : v_reshaped) {
-            tensor_2 layer_normed_heads;
-            layer_normed_heads.reserve(n_head_kv);
-            for (const auto& v_head_vec : v_token_heads) {
-                tensor_1 normalized_v(v_head_vec.size());
-                rms_norm(normalized_v, v_head_vec, hparams_.f_norm_rms_eps);
-                layer_normed_heads.push_back(normalized_v);
-            }
-            v_heads.push_back(layer_normed_heads);
+
+    bool has_kv = true;
+    if (hparams_.n_layer_kv_from_start >= 0) {
+        has_kv = (int)i < hparams_.n_layer_kv_from_start;
+    }
+
+    if (has_kv) {
+        // K
+        tensor_2 k_vectors;
+        for (const auto& normalized_x : normalized_states) {
+          tensor_1 k(layer.attn_k_weight->shape[1]);
+          mat_vec_mul(k, *layer.attn_k_weight, gguf_file_, normalized_x);
+          k_vectors.push_back(k);
         }
-        VERBOSE(print_tensor(v_heads, "Vcur_normed-" + std::to_string(i)));
-    } else {
-        v_heads = v_reshaped;
+        VERBOSE(print_tensor(k_vectors, "Kcur-" + std::to_string(i)));
+        tensor_3 k_reshaped =
+            reshape_3d(k_vectors, n_tokens, n_head_kv, n_embd_head_k);
+        VERBOSE(
+            print_tensor(k_reshaped, "Kcur-" + std::to_string(i) + " (reshaped)"));
+        k_cur = run_norm(k_reshaped, layer.attn_k_norm_weight, i);
+        VERBOSE(print_tensor(k_cur, "Kcur_normed-" + std::to_string(i)));
+        rope(k_cur, n_embd_head_k, this_rope_freq_base, hparams_.rope_freq_scale,
+             pos);
+        VERBOSE(print_tensor(k_cur, "Kcur-" + std::to_string(i) + " (post rope)"));
+
+        // V
+        tensor_2 v_vectors;
+        for (const auto& normalized_x : normalized_states) {
+          tensor_1 v(layer.attn_v_weight->shape[1]);
+          mat_vec_mul(v, *layer.attn_v_weight, gguf_file_, normalized_x);
+          v_vectors.push_back(v);
+        }
+        VERBOSE(print_tensor(v_vectors, "Vcur-" + std::to_string(i)));
+        
+        tensor_3 v_reshaped = reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head_v);
+        VERBOSE(print_tensor(v_reshaped, "Vcur-" + std::to_string(i) + " (reshaped)"));
+        
+        if (hparams_.architecture == "gemma4") {
+            // Gemma 4 RMSNorm on V (no weights)
+            v_heads.reserve(n_tokens);
+            for (const auto& v_token_heads : v_reshaped) {
+                tensor_2 layer_normed_heads;
+                layer_normed_heads.reserve(n_head_kv);
+                for (const auto& v_head_vec : v_token_heads) {
+                    tensor_1 normalized_v(v_head_vec.size());
+                    rms_norm(normalized_v, v_head_vec, hparams_.f_norm_rms_eps);
+                    layer_normed_heads.push_back(normalized_v);
+                }
+                v_heads.push_back(layer_normed_heads);
+            }
+            VERBOSE(print_tensor(v_heads, "Vcur_normed-" + std::to_string(i)));
+        } else {
+            v_heads = v_reshaped;
+        }
+    }
+
+    size_t src_il = i;
+    if (!has_kv) {
+        src_il = hparams_.n_layer_kv_from_start - (is_swa ? 2 : 1);
     }
 
     // Note: run_attn still needs dequantized output_weights for now
     // TODO: Optimize run_attn to use Q4_0 directly
     tensor_2 attention_results =
-        run_attn(kv_cache_[i], layer.attn_output_weight, q_cur, k_cur,
+        run_attn(kv_cache_[src_il], layer.attn_output_weight, q_cur, k_cur,
                  v_heads, n_head, n_head_kv, n_embd_head_v, i, pos);
 
     if (layer.post_attention_norm_weight) {
