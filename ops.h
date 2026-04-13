@@ -42,6 +42,10 @@ void mat_vec_mul_fp16(std::vector<float>& o, const std::vector<uint16_t>& w,
                       const std::vector<float>& x, size_t n_rows,
                       size_t n_cols);
 
+// Matrix-Vector Multiplication with BF16 weights (tensor stored in GGUF)
+void mat_vec_mul_bf16(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x);
+
 // FP16 Vector Operations
 void vec_scale_f16(tensor_f16_1& y, float v);
 void vec_mad_f16(tensor_f16_1& y, const tensor_f16_1& x, float v);
@@ -67,6 +71,8 @@ void mat_vec_mul_q8_0(std::vector<float>& o, const TensorInfo& w_tensor,
 void mat_vec_mul_q5_0(std::vector<float>& o, const TensorInfo& w_tensor,
                       const GGUFFile& gguf_file, const std::vector<float>& x);
 
+void dequantize_q4_k_row(std::vector<float>& o, const uint8_t* block_ptr,
+                         size_t n_cols);
 void dequantize_q6_k_row(std::vector<float>& o, const uint8_t* block_ptr,
                          size_t n_cols);
 void dequantize_q8_0_row(std::vector<float>& o, const uint8_t* block_ptr,

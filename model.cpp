@@ -75,8 +75,17 @@ void Model::load_hparams(GGUFFile& gguf_file) {
 
   hparams_.block_count = get_key(arch + ".block_count")->scalar.u32;
   hparams_.embedding_length = get_key(arch + ".embedding_length")->scalar.u32;
-  hparams_.feed_forward_length =
-      get_key(arch + ".feed_forward_length")->scalar.u32;
+  {
+    const auto* v = get_key(arch + ".feed_forward_length");
+    if (v->type == GGUFType::ARRAY) {
+      // Per-layer FFN sizes (gemma4 style) — store first element as a fallback
+      // scalar; actual sizes come from the weight tensor shapes at runtime.
+      hparams_.feed_forward_length =
+          v->arr.empty() ? 0 : v->arr[0].scalar.u32;
+    } else {
+      hparams_.feed_forward_length = v->scalar.u32;
+    }
+  }
   hparams_.attention_head_count =
       get_key(arch + ".attention.head_count")->scalar.u32;
   hparams_.attention_head_count_kv =
@@ -134,12 +143,12 @@ void Model::load_hparams(GGUFFile& gguf_file) {
   }
 
   const auto* final_logit_softcap_value =
-      get_key(arch + ".attention.final_logit_softcapping", false);
+      get_key(arch + ".final_logit_softcapping", false);
   hparams_.final_logit_softcap =
       final_logit_softcap_value ? final_logit_softcap_value->scalar.f32 : 0.0f;
 
   const auto* embedding_length_per_layer_value =
-      get_key(arch + ".embedding_length_per_layer", false);
+      get_key(arch + ".embedding_length_per_layer_input", false);
   hparams_.embedding_length_per_layer =
       embedding_length_per_layer_value ? embedding_length_per_layer_value->scalar.u32 : 0;
 }
@@ -153,7 +162,7 @@ void Model::map_tensors(GGUFFile& gguf_file) {
       token_embd_weight_ = &tensor;
     } else if (tensor.name == "output_norm.weight") {
       output_norm_weight_ = &tensor;
-    } else if (tensor.name == "token_embd_per_layer.weight") {
+    } else if (tensor.name == "per_layer_token_embd.weight") {
       token_embd_per_layer_weight_ = &tensor;
     } else if (tensor.name == "per_layer_model_proj.weight") {
       per_layer_model_proj_weight_ = &tensor;
@@ -196,13 +205,13 @@ void Model::map_tensors(GGUFFile& gguf_file) {
           layer.attn_k_norm_weight = &tensor;
         } else if (param_name == "attn_q_norm.weight") {
           layer.attn_q_norm_weight = &tensor;
-        } else if (param_name == "out_scale.weight") {
+        } else if (param_name == "layer_output_scale.weight") {
           layer.out_scale_weight = &tensor;
-        } else if (param_name == "per_layer_inp_gate.weight") {
+        } else if (param_name == "inp_gate.weight") {
           layer.per_layer_inp_gate_weight = &tensor;
-        } else if (param_name == "per_layer_proj.weight") {
+        } else if (param_name == "proj.weight") {
           layer.per_layer_proj_weight = &tensor;
-        } else if (param_name == "per_layer_post_norm.weight") {
+        } else if (param_name == "post_norm.weight") {
           layer.per_layer_post_norm_weight = &tensor;
         }
       }
@@ -574,12 +583,15 @@ tensor_3 Model::get_per_layer_inputs(const std::vector<int>& tokens) {
         for (size_t i = 0; i < row_size_elements; ++i) {
             full_row[i] = f16_to_f32(f16_ptr[i]) * scale;
         }
+    } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q4_K) {
+        dequantize_q4_k_row(full_row, row_buf.data(), row_size_elements);
+        for (float& val : full_row) val *= scale;
     } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q6_K) {
         dequantize_q6_k_row(full_row, row_buf.data(), row_size_elements);
         for (float& val : full_row) val *= scale;
     } else {
-        // Handle Q4_K if needed
-        std::cerr << "Error: get_per_layer_inputs: dequantize for Q4_K not implemented for this path" << std::endl;
+        std::cerr << "Error: get_per_layer_inputs: unsupported tensor type: "
+                  << token_embd_per_layer_weight_->tensor_type << std::endl;
         exit(1);
     }
 
@@ -1013,7 +1025,7 @@ void Model::load_vocabulary() {
 std::vector<int> Model::tokenize(const std::string& prompt,
                                  bool apply_chat_template) {
   std::vector<int> tokens;
-  if (bos_token_id != -1 && hparams_.architecture != "gemma4") {
+  if (bos_token_id != -1) {
     tokens.push_back(bos_token_id);
   }
 

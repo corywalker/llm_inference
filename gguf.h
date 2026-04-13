@@ -42,6 +42,7 @@ enum class GGUFTensorType : uint32_t {
   Q5_K = 13,
   Q6_K = 14,
   Q8_K = 15,
+  BF16 = 30,
 };
 
 std::string tensorTypeToString(uint32_t type);
@@ -121,6 +122,12 @@ class GGUFFile {
 
 extern float gguf_table_f16_f32[65536];
 inline float f16_to_f32(uint16_t f16) { return gguf_table_f16_f32[f16]; }
+inline float bf16_to_f32(uint16_t bf16) {
+  uint32_t u32 = static_cast<uint32_t>(bf16) << 16;
+  float f;
+  __builtin_memcpy(&f, &u32, sizeof(f));
+  return f;
+}
 uint16_t f32_to_f16(float f);
 float dequantize_q4_0(uint8_t q4, float d);
 void print_value(const GGUFValue& value);
