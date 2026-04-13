@@ -385,9 +385,20 @@ std::string tensorTypeToString(uint32_t type) {
       return "Q6_K";
     case GGUFTensorType::Q8_K:
       return "Q8_K";
+    case GGUFTensorType::BF16:
+      return "BF16";
     default:
       return "UNKNOWN (" + std::to_string(type) + ")";
   }
+}
+
+float bf16_to_f32(uint16_t bf16) {
+  union {
+    uint32_t as_bits;
+    float as_value;
+  } fp32;
+  fp32.as_bits = (uint32_t)bf16 << 16;
+  return fp32.as_value;
 }
 
 void print_value(const GGUFValue& value) {

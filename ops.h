@@ -66,7 +66,11 @@ void mat_vec_mul_q8_0(std::vector<float>& o, const TensorInfo& w_tensor,
                       const GGUFFile& gguf_file, const std::vector<float>& x);
 void mat_vec_mul_q5_0(std::vector<float>& o, const TensorInfo& w_tensor,
                       const GGUFFile& gguf_file, const std::vector<float>& x);
+void mat_vec_mul_bf16(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x);
 
+void dequantize_q4_k_row(std::vector<float>& o, const uint8_t* block_ptr,
+                         size_t n_cols);
 void dequantize_q6_k_row(std::vector<float>& o, const uint8_t* block_ptr,
                          size_t n_cols);
 void dequantize_q8_0_row(std::vector<float>& o, const uint8_t* block_ptr,

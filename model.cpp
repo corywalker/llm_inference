@@ -140,6 +140,9 @@ void Model::load_hparams(GGUFFile& gguf_file) {
 
   const auto* embedding_length_per_layer_value =
       get_key(arch + ".embedding_length_per_layer", false);
+  if (!embedding_length_per_layer_value) {
+      embedding_length_per_layer_value = get_key(arch + ".embedding_length_per_layer_input", false);
+  }
   hparams_.embedding_length_per_layer =
       embedding_length_per_layer_value ? embedding_length_per_layer_value->scalar.u32 : 0;
 }
@@ -153,7 +156,8 @@ void Model::map_tensors(GGUFFile& gguf_file) {
       token_embd_weight_ = &tensor;
     } else if (tensor.name == "output_norm.weight") {
       output_norm_weight_ = &tensor;
-    } else if (tensor.name == "token_embd_per_layer.weight") {
+    } else if (tensor.name == "token_embd_per_layer.weight" ||
+               tensor.name == "per_layer_token_embd.weight") {
       token_embd_per_layer_weight_ = &tensor;
     } else if (tensor.name == "per_layer_model_proj.weight") {
       per_layer_model_proj_weight_ = &tensor;
@@ -196,13 +200,17 @@ void Model::map_tensors(GGUFFile& gguf_file) {
           layer.attn_k_norm_weight = &tensor;
         } else if (param_name == "attn_q_norm.weight") {
           layer.attn_q_norm_weight = &tensor;
-        } else if (param_name == "out_scale.weight") {
+        } else if (param_name == "out_scale.weight" ||
+                   param_name == "layer_output_scale.weight") {
           layer.out_scale_weight = &tensor;
-        } else if (param_name == "per_layer_inp_gate.weight") {
+        } else if (param_name == "per_layer_inp_gate.weight" ||
+                   param_name == "inp_gate.weight") {
           layer.per_layer_inp_gate_weight = &tensor;
-        } else if (param_name == "per_layer_proj.weight") {
+        } else if (param_name == "per_layer_proj.weight" ||
+                   param_name == "proj.weight") {
           layer.per_layer_proj_weight = &tensor;
-        } else if (param_name == "per_layer_post_norm.weight") {
+        } else if (param_name == "per_layer_post_norm.weight" ||
+                   param_name == "post_norm.weight") {
           layer.per_layer_post_norm_weight = &tensor;
         }
       }
@@ -577,9 +585,11 @@ tensor_3 Model::get_per_layer_inputs(const std::vector<int>& tokens) {
     } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q6_K) {
         dequantize_q6_k_row(full_row, row_buf.data(), row_size_elements);
         for (float& val : full_row) val *= scale;
+    } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q4_K) {
+        dequantize_q4_k_row(full_row, row_buf.data(), row_size_elements);
+        for (float& val : full_row) val *= scale;
     } else {
-        // Handle Q4_K if needed
-        std::cerr << "Error: get_per_layer_inputs: dequantize for Q4_K not implemented for this path" << std::endl;
+        std::cerr << "Error: get_per_layer_inputs: Unsupported tensor type: " << token_embd_per_layer_weight_->tensor_type << std::endl;
         exit(1);
     }
 
@@ -860,6 +870,10 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     // Per-layer embedding
     if (!inp_per_layer.empty()) {
         VERBOSE(print_tensor(hidden_states, "pe_in-" + std::to_string(i)));
+        
+        tensor_1 norm_weight(layer.per_layer_post_norm_weight->shape[0]);
+        gguf_file_.read_tensor_data(*layer.per_layer_post_norm_weight, norm_weight.data(), norm_weight.size() * sizeof(float));
+
         for (size_t token_idx = 0; token_idx < n_tokens; ++token_idx) {
             tensor_1 gate_out(layer.per_layer_inp_gate_weight->shape[1]);
             mat_vec_mul(gate_out, *layer.per_layer_inp_gate_weight, gguf_file_, hidden_states[token_idx]);
@@ -882,9 +896,6 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
             tensor_1 normalized_proj(proj_out.size());
             rms_norm(normalized_proj, proj_out, hparams_.f_norm_rms_eps);
             
-            tensor_1 norm_weight(layer.per_layer_post_norm_weight->shape[0]);
-            gguf_file_.read_tensor_data(*layer.per_layer_post_norm_weight, norm_weight.data(), norm_weight.size() * sizeof(float));
-
             for (size_t j = 0; j < hidden_states[token_idx].size(); ++j) {
                 hidden_states[token_idx][j] += normalized_proj[j] * norm_weight[j];
             }

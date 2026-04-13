@@ -890,6 +890,44 @@ void mat_vec_mul_q5_0(std::vector<float>& o, const TensorInfo& w_tensor,
   for (auto&& result : results) result.get();
 }
 
+void mat_vec_mul_bf16(std::vector<float>& o, const TensorInfo& w_tensor,
+                      const GGUFFile& gguf_file, const std::vector<float>& x) {
+  const size_t n_rows = w_tensor.shape[1];
+  const size_t n_cols = w_tensor.shape[0];
+
+  if (x.size() != n_cols) {
+    throw std::runtime_error("mat_vec_mul_bf16: input vector size mismatch");
+  }
+
+  o.resize(n_rows);
+  const uint16_t* w_data =
+      reinterpret_cast<const uint16_t*>(gguf_file.get_tensor_data(w_tensor));
+
+  auto compute_range = [&](size_t start_row, size_t end_row) {
+    for (size_t row = start_row; row < end_row; ++row) {
+      float sum = 0.0f;
+      const uint16_t* row_data = w_data + row * n_cols;
+      for (size_t col = 0; col < n_cols; ++col) {
+        sum += bf16_to_f32(row_data[col]) * x[col];
+      }
+      o[row] = sum;
+    }
+  };
+
+  std::vector<std::future<void>> results;
+  size_t num_threads = g_n_threads;
+  size_t chunk_size = (n_rows + num_threads - 1) / num_threads;
+
+  for (size_t i = 0; i < num_threads; ++i) {
+    size_t start = i * chunk_size;
+    size_t end = std::min(start + chunk_size, n_rows);
+    if (start >= end) break;
+    results.emplace_back(pool->enqueue(compute_range, start, end));
+  }
+
+  for (auto&& result : results) result.get();
+}
+
 void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
                  const GGUFFile& gguf_file, const std::vector<float>& x) {
   if (x.size() != w_tensor.shape[0]) {
@@ -905,9 +943,58 @@ void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
     mat_vec_mul_q8_0(o, w_tensor, gguf_file, x);
   } else if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q5_0) {
     mat_vec_mul_q5_0(o, w_tensor, gguf_file, x);
+  } else if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::BF16) {
+    mat_vec_mul_bf16(o, w_tensor, gguf_file, x);
   } else {
     throw std::runtime_error("mat_vec_mul: unsupported tensor type " +
                              std::to_string(w_tensor.tensor_type));
+  }
+}
+
+void dequantize_q4_k_row(std::vector<float>& o, const uint8_t* block_ptr,
+                         size_t n_cols) {
+  o.resize(n_cols);
+  const size_t bytes_per_block = sizeof(block_q4_K);
+  const size_t blocks_per_row = n_cols / QK_K;
+
+  auto get_scale_min_k4 = [](int j, const uint8_t* q, uint8_t* d, uint8_t* m) {
+    if (j < 4) {
+      *d = q[j] & 63;
+      *m = q[j + 4] & 63;
+    } else {
+      *d = (q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4);
+      *m = (q[j + 4] >> 4) | ((q[j - 0] >> 6) << 4);
+    }
+  };
+
+  for (size_t block = 0; block < blocks_per_row; ++block) {
+    const block_q4_K* q4k = reinterpret_cast<const block_q4_K*>(
+        block_ptr + block * bytes_per_block);
+    const float d = f16_to_f32(q4k->d);
+    const float min = f16_to_f32(q4k->dmin);
+
+    const uint8_t* q4 = q4k->qs;
+    int is = 0;
+    for (int j = 0; j < QK_K; j += 64) {
+      uint8_t sc, m;
+
+      get_scale_min_k4(is + 0, q4k->scales, &sc, &m);
+      const float d1 = d * sc;
+      const float m1 = min * m;
+      for (int l = 0; l < 32; ++l) {
+        o[block * QK_K + is * 32 + l] = d1 * (q4[l] & 0xF) - m1;
+      }
+
+      get_scale_min_k4(is + 1, q4k->scales, &sc, &m);
+      const float d2 = d * sc;
+      const float m2 = min * m;
+      for (int l = 0; l < 32; ++l) {
+        o[block * QK_K + (is + 1) * 32 + l] = d2 * (q4[l] >> 4) - m2;
+      }
+
+      q4 += 32;
+      is += 2;
+    }
   }
 }
 
