@@ -121,7 +121,8 @@ int main(int argc, char** argv) {
 
     int end_of_turn_token_id = -1;
     for (size_t i = 0; i < token_strings.size(); ++i) {
-      if (token_strings[i] == "<end_of_turn>" || token_strings[i] == "<turn|>") {
+      if (token_strings[i] == "<end_of_turn>" ||
+          token_strings[i] == "<turn|>") {
         end_of_turn_token_id = i;
         break;
       }

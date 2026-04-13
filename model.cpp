@@ -1100,8 +1100,7 @@ std::vector<int> Model::tokenize(const std::string& prompt,
       if (bos_token_id != -1) {
         tokens.push_back(bos_token_id);
       }
-      processed_prompt =
-          "<|turn>user\n" + prompt + "<turn|>\n<|turn>model\n";
+      processed_prompt = "<|turn>user\n" + prompt + "<turn|>\n<|turn>model\n";
     } else {
       if (bos_token_id != -1) {
         tokens.push_back(bos_token_id);
