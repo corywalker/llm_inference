@@ -124,7 +124,7 @@ class Model {
                     int layer_id);
   tensor_3 get_per_layer_inputs(const std::vector<int>& tokens);
   tensor_3 project_per_layer_inputs(const tensor_2& inputs_embeds,
-                                   tensor_3& inp_per_layer);
+                                    tensor_3& inp_per_layer);
   tensor_2 run_attn(KVCacheLayer& kv_cache, const TensorInfo* output_weights,
                     const tensor_3& q_heads, const tensor_3& k_heads,
                     const tensor_3& v_heads, uint32_t n_head,

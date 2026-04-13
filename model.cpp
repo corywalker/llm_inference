@@ -16,7 +16,7 @@ Model::Model(GGUFFile& gguf_file) : gguf_file_(gguf_file) {
   token_embd_per_layer_weight_ = nullptr;
   per_layer_model_proj_weight_ = nullptr;
   per_layer_proj_norm_weight_ = nullptr;
-  
+
   load_hparams(gguf_file);
   layers_.resize(hparams_.block_count);
   for (auto& layer : layers_) {
@@ -38,7 +38,7 @@ Model::Model(GGUFFile& gguf_file) : gguf_file_(gguf_file) {
     layer.per_layer_proj_weight = nullptr;
     layer.per_layer_post_norm_weight = nullptr;
   }
-  
+
   kv_cache_.resize(hparams_.block_count);
   map_tensors(gguf_file);
   load_vocabulary();
@@ -97,25 +97,29 @@ void Model::load_hparams(GGUFFile& gguf_file) {
   if (attention_key_length_value) {
     hparams_.n_embd_head_k = attention_key_length_value->scalar.u32;
   }
-  
+
   const auto* attention_key_length_swa_value =
       get_key(arch + ".attention.key_length_swa", false);
-  hparams_.n_embd_head_k_swa =
-      attention_key_length_swa_value ? attention_key_length_swa_value->scalar.u32 : hparams_.n_embd_head_k;
+  hparams_.n_embd_head_k_swa = attention_key_length_swa_value
+                                   ? attention_key_length_swa_value->scalar.u32
+                                   : hparams_.n_embd_head_k;
 
   const auto* attention_value_length_value =
       get_key(arch + ".attention.value_length", false);
-  hparams_.n_embd_head_v =
-      attention_value_length_value ? attention_value_length_value->scalar.u32 : hparams_.n_embd_head_k;
-      
+  hparams_.n_embd_head_v = attention_value_length_value
+                               ? attention_value_length_value->scalar.u32
+                               : hparams_.n_embd_head_k;
+
   const auto* attention_value_length_swa_value =
       get_key(arch + ".attention.value_length_swa", false);
   hparams_.n_embd_head_v_swa =
-      attention_value_length_swa_value ? attention_value_length_swa_value->scalar.u32 : hparams_.n_embd_head_v;
+      attention_value_length_swa_value
+          ? attention_value_length_swa_value->scalar.u32
+          : hparams_.n_embd_head_v;
 
   hparams_.f_attention_scale = 1.0f / std::sqrt(float(hparams_.n_embd_head_k));
   if (arch == "gemma4") {
-      hparams_.f_attention_scale = 1.0f;
+    hparams_.f_attention_scale = 1.0f;
   }
 
   const auto* max_alibi_bias_value =
@@ -144,16 +148,21 @@ void Model::load_hparams(GGUFFile& gguf_file) {
   const auto* embedding_length_per_layer_value =
       get_key(arch + ".embedding_length_per_layer", false);
   if (!embedding_length_per_layer_value) {
-      embedding_length_per_layer_value = get_key(arch + ".embedding_length_per_layer_input", false);
+    embedding_length_per_layer_value =
+        get_key(arch + ".embedding_length_per_layer_input", false);
   }
   hparams_.embedding_length_per_layer =
-      embedding_length_per_layer_value ? embedding_length_per_layer_value->scalar.u32 : 0;
+      embedding_length_per_layer_value
+          ? embedding_length_per_layer_value->scalar.u32
+          : 0;
 
-  const auto* shared_kv_layers_value = get_key(arch + ".attention.shared_kv_layers", false);
+  const auto* shared_kv_layers_value =
+      get_key(arch + ".attention.shared_kv_layers", false);
   if (shared_kv_layers_value) {
-      hparams_.n_layer_kv_from_start = hparams_.block_count - shared_kv_layers_value->scalar.u32;
+    hparams_.n_layer_kv_from_start =
+        hparams_.block_count - shared_kv_layers_value->scalar.u32;
   } else {
-      hparams_.n_layer_kv_from_start = -1;
+    hparams_.n_layer_kv_from_start = -1;
   }
 }
 
@@ -457,8 +466,10 @@ tensor_2 Model::run_attn(KVCacheLayer& kv_cache,
       kv_cache.k = k_heads_f16;
       kv_cache.v = v_heads_f16;
     } else {
-      kv_cache.k.insert(kv_cache.k.end(), k_heads_f16.begin(), k_heads_f16.end());
-      kv_cache.v.insert(kv_cache.v.end(), v_heads_f16.begin(), v_heads_f16.end());
+      kv_cache.k.insert(kv_cache.k.end(), k_heads_f16.begin(),
+                        k_heads_f16.end());
+      kv_cache.v.insert(kv_cache.v.end(), v_heads_f16.begin(),
+                        v_heads_f16.end());
     }
   }
 
@@ -565,54 +576,63 @@ tensor_3 Model::get_per_layer_inputs(const std::vector<int>& tokens) {
   // We need to extract rows and reshape.
   size_t row_size_elements = n_embd_per_layer * n_layer;
   size_t row_size_bytes = 0;
-  if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::F16) {
-      row_size_bytes = row_size_elements * sizeof(uint16_t);
-  } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q6_K) {
-      row_size_bytes = (row_size_elements / QK_K) * sizeof(block_q6_K);
-  } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q4_K) {
-      row_size_bytes = (row_size_elements / QK_K) * sizeof(block_q4_K);
+  if (token_embd_per_layer_weight_->tensor_type ==
+      (uint32_t)GGUFTensorType::F16) {
+    row_size_bytes = row_size_elements * sizeof(uint16_t);
+  } else if (token_embd_per_layer_weight_->tensor_type ==
+             (uint32_t)GGUFTensorType::Q6_K) {
+    row_size_bytes = (row_size_elements / QK_K) * sizeof(block_q6_K);
+  } else if (token_embd_per_layer_weight_->tensor_type ==
+             (uint32_t)GGUFTensorType::Q4_K) {
+    row_size_bytes = (row_size_elements / QK_K) * sizeof(block_q4_K);
   } else {
-      std::cerr << "Error: get_per_layer_inputs: Unsupported tensor type: " << token_embd_per_layer_weight_->tensor_type << std::endl;
-      exit(1);
+    std::cerr << "Error: get_per_layer_inputs: Unsupported tensor type: "
+              << token_embd_per_layer_weight_->tensor_type << std::endl;
+    exit(1);
   }
 
-  tensor_3 inp_per_layer; // [tokens][layer][embd_per_layer]
+  tensor_3 inp_per_layer;  // [tokens][layer][embd_per_layer]
   inp_per_layer.reserve(n_tokens);
-  
+
   std::vector<uint8_t> row_buf(row_size_bytes);
   float scale = std::sqrt((float)n_embd_per_layer);
 
   for (int token : tokens) {
-    gguf_file_.read_tensor_data_region(*token_embd_per_layer_weight_, 
-                                       token * row_size_bytes, 
-                                       row_buf.data(), row_size_bytes);
-    
+    gguf_file_.read_tensor_data_region(*token_embd_per_layer_weight_,
+                                       token * row_size_bytes, row_buf.data(),
+                                       row_size_bytes);
+
     tensor_1 full_row;
-    if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::F16) {
-        full_row.resize(row_size_elements);
-        const uint16_t* f16_ptr = reinterpret_cast<const uint16_t*>(row_buf.data());
-        for (size_t i = 0; i < row_size_elements; ++i) {
-            full_row[i] = f16_to_f32(f16_ptr[i]) * scale;
-        }
-    } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q6_K) {
-        dequantize_q6_k_row(full_row, row_buf.data(), row_size_elements);
-        for (float& val : full_row) val *= scale;
-    } else if (token_embd_per_layer_weight_->tensor_type == (uint32_t)GGUFTensorType::Q4_K) {
-        dequantize_q4_k_row(full_row, row_buf.data(), row_size_elements);
-        for (float& val : full_row) val *= scale;
+    if (token_embd_per_layer_weight_->tensor_type ==
+        (uint32_t)GGUFTensorType::F16) {
+      full_row.resize(row_size_elements);
+      const uint16_t* f16_ptr =
+          reinterpret_cast<const uint16_t*>(row_buf.data());
+      for (size_t i = 0; i < row_size_elements; ++i) {
+        full_row[i] = f16_to_f32(f16_ptr[i]) * scale;
+      }
+    } else if (token_embd_per_layer_weight_->tensor_type ==
+               (uint32_t)GGUFTensorType::Q6_K) {
+      dequantize_q6_k_row(full_row, row_buf.data(), row_size_elements);
+      for (float& val : full_row) val *= scale;
+    } else if (token_embd_per_layer_weight_->tensor_type ==
+               (uint32_t)GGUFTensorType::Q4_K) {
+      dequantize_q4_k_row(full_row, row_buf.data(), row_size_elements);
+      for (float& val : full_row) val *= scale;
     } else {
-        std::cerr << "Error: get_per_layer_inputs: Unsupported tensor type: " << token_embd_per_layer_weight_->tensor_type << std::endl;
-        exit(1);
+      std::cerr << "Error: get_per_layer_inputs: Unsupported tensor type: "
+                << token_embd_per_layer_weight_->tensor_type << std::endl;
+      exit(1);
     }
 
     tensor_2 layer_inputs;
     layer_inputs.reserve(n_layer);
     for (uint32_t l = 0; l < n_layer; ++l) {
-        tensor_1 layer_embd(n_embd_per_layer);
-        for (uint32_t i = 0; i < n_embd_per_layer; ++i) {
-            layer_embd[i] = full_row[l * n_embd_per_layer + i];
-        }
-        layer_inputs.push_back(layer_embd);
+      tensor_1 layer_embd(n_embd_per_layer);
+      for (uint32_t i = 0; i < n_embd_per_layer; ++i) {
+        layer_embd[i] = full_row[l * n_embd_per_layer + i];
+      }
+      layer_inputs.push_back(layer_embd);
     }
     inp_per_layer.push_back(layer_inputs);
   }
@@ -620,61 +640,67 @@ tensor_3 Model::get_per_layer_inputs(const std::vector<int>& tokens) {
   return inp_per_layer;
 }
 
-tensor_3 Model::project_per_layer_inputs(const tensor_2& inputs_embeds, tensor_3& inp_per_layer) {
-    if (!per_layer_model_proj_weight_) return inp_per_layer;
+tensor_3 Model::project_per_layer_inputs(const tensor_2& inputs_embeds,
+                                         tensor_3& inp_per_layer) {
+  if (!per_layer_model_proj_weight_) return inp_per_layer;
 
-    const uint32_t n_tokens = inputs_embeds.size();
-    const uint32_t n_embd = hparams_.embedding_length;
-    const uint32_t n_embd_per_layer = hparams_.embedding_length_per_layer;
-    const uint32_t n_layer = hparams_.block_count;
+  const uint32_t n_tokens = inputs_embeds.size();
+  const uint32_t n_embd = hparams_.embedding_length;
+  const uint32_t n_embd_per_layer = hparams_.embedding_length_per_layer;
+  const uint32_t n_layer = hparams_.block_count;
 
-    const float per_layer_projection_scale = 1.0f / std::sqrt((float)n_embd);
-    const float per_layer_input_scale = 1.0f / std::sqrt(2.0f);
+  const float per_layer_projection_scale = 1.0f / std::sqrt((float)n_embd);
+  const float per_layer_input_scale = 1.0f / std::sqrt(2.0f);
 
-    tensor_3 projected; // [tokens][layer][embd_per_layer]
-    projected.reserve(n_tokens);
+  tensor_3 projected;  // [tokens][layer][embd_per_layer]
+  projected.reserve(n_tokens);
 
-    for (size_t t = 0; t < n_tokens; ++t) {
-        tensor_1 proj_out(per_layer_model_proj_weight_->shape[1]);
-        mat_vec_mul(proj_out, *per_layer_model_proj_weight_, gguf_file_, inputs_embeds[t]);
-        
-        // Scale
-        for (float& val : proj_out) val *= per_layer_projection_scale;
+  for (size_t t = 0; t < n_tokens; ++t) {
+    tensor_1 proj_out(per_layer_model_proj_weight_->shape[1]);
+    mat_vec_mul(proj_out, *per_layer_model_proj_weight_, gguf_file_,
+                inputs_embeds[t]);
 
-        // Reshape proj_out [n_embd_per_layer * n_layer] to [n_layer][n_embd_per_layer]
-        tensor_2 layer_projs;
-        layer_projs.reserve(n_layer);
-        for (uint32_t l = 0; l < n_layer; ++l) {
-            tensor_1 layer_proj(n_embd_per_layer);
-            for (uint32_t i = 0; i < n_embd_per_layer; ++i) {
-                layer_proj[i] = proj_out[l * n_embd_per_layer + i];
-            }
-            layer_projs.push_back(layer_proj);
-        }
-        projected.push_back(layer_projs);
+    // Scale
+    for (float& val : proj_out) val *= per_layer_projection_scale;
+
+    // Reshape proj_out [n_embd_per_layer * n_layer] to
+    // [n_layer][n_embd_per_layer]
+    tensor_2 layer_projs;
+    layer_projs.reserve(n_layer);
+    for (uint32_t l = 0; l < n_layer; ++l) {
+      tensor_1 layer_proj(n_embd_per_layer);
+      for (uint32_t i = 0; i < n_embd_per_layer; ++i) {
+        layer_proj[i] = proj_out[l * n_embd_per_layer + i];
+      }
+      layer_projs.push_back(layer_proj);
     }
+    projected.push_back(layer_projs);
+  }
 
-    // Now RMSNorm projected [tokens][layer][embd_per_layer] over embd_per_layer
-    // per_layer_proj_norm is [n_embd_per_layer]? Wait, llama.cpp says -1 which usually means shared over non-channel dims.
-    // In gemma4-iswa.cpp:
-    // per_layer_proj = build_norm(per_layer_proj, model.per_layer_proj_norm, nullptr, LLM_NORM_RMS, -1);
-    // This norm weight is [n_embd_per_layer].
-    
-    tensor_1 norm_weight(n_embd_per_layer);
-    gguf_file_.read_tensor_data(*per_layer_proj_norm_weight_, norm_weight.data(), n_embd_per_layer * sizeof(float));
+  // Now RMSNorm projected [tokens][layer][embd_per_layer] over embd_per_layer
+  // per_layer_proj_norm is [n_embd_per_layer]? Wait, llama.cpp says -1 which
+  // usually means shared over non-channel dims. In gemma4-iswa.cpp:
+  // per_layer_proj = build_norm(per_layer_proj, model.per_layer_proj_norm,
+  // nullptr, LLM_NORM_RMS, -1); This norm weight is [n_embd_per_layer].
 
-    for (size_t t = 0; t < n_tokens; ++t) {
-        for (size_t l = 0; l < n_layer; ++l) {
-            tensor_1 normalized_x(n_embd_per_layer);
-            rms_norm(normalized_x, projected[t][l], hparams_.f_norm_rms_eps);
-            for (size_t i = 0; i < n_embd_per_layer; ++i) {
-                float val = (normalized_x[i] * norm_weight[i] + inp_per_layer[t][l][i]) * per_layer_input_scale;
-                inp_per_layer[t][l][i] = val;
-            }
-        }
+  tensor_1 norm_weight(n_embd_per_layer);
+  gguf_file_.read_tensor_data(*per_layer_proj_norm_weight_, norm_weight.data(),
+                              n_embd_per_layer * sizeof(float));
+
+  for (size_t t = 0; t < n_tokens; ++t) {
+    for (size_t l = 0; l < n_layer; ++l) {
+      tensor_1 normalized_x(n_embd_per_layer);
+      rms_norm(normalized_x, projected[t][l], hparams_.f_norm_rms_eps);
+      for (size_t i = 0; i < n_embd_per_layer; ++i) {
+        float val =
+            (normalized_x[i] * norm_weight[i] + inp_per_layer[t][l][i]) *
+            per_layer_input_scale;
+        inp_per_layer[t][l][i] = val;
+      }
     }
+  }
 
-    return inp_per_layer;
+  return inp_per_layer;
 }
 
 tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
@@ -688,18 +714,18 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
   tensor_3 inp_per_layer;
   if (token_embd_per_layer_weight_) {
-      inp_per_layer = get_per_layer_inputs(tokens);
-      inp_per_layer = project_per_layer_inputs(hidden_states, inp_per_layer);
+    inp_per_layer = get_per_layer_inputs(tokens);
+    inp_per_layer = project_per_layer_inputs(hidden_states, inp_per_layer);
   }
 
-    // Transformer blocks
+  // Transformer blocks
   for (size_t i = 0; i < layers_.size(); ++i) {
     bool is_swa = false;
     if (i < hparams_.swa_layers.size()) {
-        is_swa = hparams_.swa_layers[i];
+      is_swa = hparams_.swa_layers[i];
     } else {
-        size_t swa_n_pattern = 6;
-        is_swa = i % swa_n_pattern < (swa_n_pattern - 1);
+      size_t swa_n_pattern = 6;
+      is_swa = i % swa_n_pattern < (swa_n_pattern - 1);
     }
 
     // Gemma will use a different freq_base depending on the layer.
@@ -716,8 +742,10 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     if (n_tokens == 0) {
       return {};
     }
-    uint32_t n_embd_head_k = is_swa ? hparams_.n_embd_head_k_swa : hparams_.n_embd_head_k;
-    uint32_t n_embd_head_v = is_swa ? hparams_.n_embd_head_v_swa : hparams_.n_embd_head_v;
+    uint32_t n_embd_head_k =
+        is_swa ? hparams_.n_embd_head_k_swa : hparams_.n_embd_head_k;
+    uint32_t n_embd_head_v =
+        is_swa ? hparams_.n_embd_head_v_swa : hparams_.n_embd_head_v;
 
     // Q
     tensor_2 q_vectors;
@@ -727,7 +755,8 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
       q_vectors.push_back(q);
     }
     VERBOSE(print_tensor(q_vectors, "Qcur-" + std::to_string(i)));
-    tensor_3 q_reshaped = reshape_3d(q_vectors, n_tokens, n_head, n_embd_head_k);
+    tensor_3 q_reshaped =
+        reshape_3d(q_vectors, n_tokens, n_head, n_embd_head_k);
     VERBOSE(
         print_tensor(q_reshaped, "Qcur-" + std::to_string(i) + " (reshaped)"));
     tensor_3 q_cur = run_norm(q_reshaped, layer.attn_q_norm_weight, i);
@@ -744,62 +773,65 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
     bool has_kv = true;
     if (hparams_.n_layer_kv_from_start >= 0) {
-        has_kv = (int)i < hparams_.n_layer_kv_from_start;
+      has_kv = (int)i < hparams_.n_layer_kv_from_start;
     }
 
     if (has_kv) {
-        // K
-        tensor_2 k_vectors;
-        for (const auto& normalized_x : normalized_states) {
-          tensor_1 k(layer.attn_k_weight->shape[1]);
-          mat_vec_mul(k, *layer.attn_k_weight, gguf_file_, normalized_x);
-          k_vectors.push_back(k);
-        }
-        VERBOSE(print_tensor(k_vectors, "Kcur-" + std::to_string(i)));
-        tensor_3 k_reshaped =
-            reshape_3d(k_vectors, n_tokens, n_head_kv, n_embd_head_k);
-        VERBOSE(
-            print_tensor(k_reshaped, "Kcur-" + std::to_string(i) + " (reshaped)"));
-        k_cur = run_norm(k_reshaped, layer.attn_k_norm_weight, i);
-        VERBOSE(print_tensor(k_cur, "Kcur_normed-" + std::to_string(i)));
-        rope(k_cur, n_embd_head_k, this_rope_freq_base, hparams_.rope_freq_scale,
-             pos);
-        VERBOSE(print_tensor(k_cur, "Kcur-" + std::to_string(i) + " (post rope)"));
+      // K
+      tensor_2 k_vectors;
+      for (const auto& normalized_x : normalized_states) {
+        tensor_1 k(layer.attn_k_weight->shape[1]);
+        mat_vec_mul(k, *layer.attn_k_weight, gguf_file_, normalized_x);
+        k_vectors.push_back(k);
+      }
+      VERBOSE(print_tensor(k_vectors, "Kcur-" + std::to_string(i)));
+      tensor_3 k_reshaped =
+          reshape_3d(k_vectors, n_tokens, n_head_kv, n_embd_head_k);
+      VERBOSE(print_tensor(k_reshaped,
+                           "Kcur-" + std::to_string(i) + " (reshaped)"));
+      k_cur = run_norm(k_reshaped, layer.attn_k_norm_weight, i);
+      VERBOSE(print_tensor(k_cur, "Kcur_normed-" + std::to_string(i)));
+      rope(k_cur, n_embd_head_k, this_rope_freq_base, hparams_.rope_freq_scale,
+           pos);
+      VERBOSE(
+          print_tensor(k_cur, "Kcur-" + std::to_string(i) + " (post rope)"));
 
-        // V
-        tensor_2 v_vectors;
-        for (const auto& normalized_x : normalized_states) {
-          tensor_1 v(layer.attn_v_weight->shape[1]);
-          mat_vec_mul(v, *layer.attn_v_weight, gguf_file_, normalized_x);
-          v_vectors.push_back(v);
+      // V
+      tensor_2 v_vectors;
+      for (const auto& normalized_x : normalized_states) {
+        tensor_1 v(layer.attn_v_weight->shape[1]);
+        mat_vec_mul(v, *layer.attn_v_weight, gguf_file_, normalized_x);
+        v_vectors.push_back(v);
+      }
+      VERBOSE(print_tensor(v_vectors, "Vcur-" + std::to_string(i)));
+
+      tensor_3 v_reshaped =
+          reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head_v);
+      VERBOSE(print_tensor(v_reshaped,
+                           "Vcur-" + std::to_string(i) + " (reshaped)"));
+
+      if (hparams_.architecture == "gemma4") {
+        // Gemma 4 RMSNorm on V (no weights)
+        v_heads.reserve(n_tokens);
+        for (const auto& v_token_heads : v_reshaped) {
+          tensor_2 layer_normed_heads;
+          layer_normed_heads.reserve(n_head_kv);
+          for (const auto& v_head_vec : v_token_heads) {
+            tensor_1 normalized_v(v_head_vec.size());
+            rms_norm(normalized_v, v_head_vec, hparams_.f_norm_rms_eps);
+            layer_normed_heads.push_back(normalized_v);
+          }
+          v_heads.push_back(layer_normed_heads);
         }
-        VERBOSE(print_tensor(v_vectors, "Vcur-" + std::to_string(i)));
-        
-        tensor_3 v_reshaped = reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head_v);
-        VERBOSE(print_tensor(v_reshaped, "Vcur-" + std::to_string(i) + " (reshaped)"));
-        
-        if (hparams_.architecture == "gemma4") {
-            // Gemma 4 RMSNorm on V (no weights)
-            v_heads.reserve(n_tokens);
-            for (const auto& v_token_heads : v_reshaped) {
-                tensor_2 layer_normed_heads;
-                layer_normed_heads.reserve(n_head_kv);
-                for (const auto& v_head_vec : v_token_heads) {
-                    tensor_1 normalized_v(v_head_vec.size());
-                    rms_norm(normalized_v, v_head_vec, hparams_.f_norm_rms_eps);
-                    layer_normed_heads.push_back(normalized_v);
-                }
-                v_heads.push_back(layer_normed_heads);
-            }
-            VERBOSE(print_tensor(v_heads, "Vcur_normed-" + std::to_string(i)));
-        } else {
-            v_heads = v_reshaped;
-        }
+        VERBOSE(print_tensor(v_heads, "Vcur_normed-" + std::to_string(i)));
+      } else {
+        v_heads = v_reshaped;
+      }
     }
 
     size_t src_il = i;
     if (!has_kv) {
-        src_il = hparams_.n_layer_kv_from_start - (is_swa ? 2 : 1);
+      src_il = hparams_.n_layer_kv_from_start - (is_swa ? 2 : 1);
     }
 
     // Note: run_attn still needs dequantized output_weights for now
@@ -893,48 +925,55 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
 
     // Per-layer embedding
     if (!inp_per_layer.empty()) {
-        VERBOSE(print_tensor(hidden_states, "pe_in-" + std::to_string(i)));
-        
-        tensor_1 norm_weight(layer.per_layer_post_norm_weight->shape[0]);
-        gguf_file_.read_tensor_data(*layer.per_layer_post_norm_weight, norm_weight.data(), norm_weight.size() * sizeof(float));
+      VERBOSE(print_tensor(hidden_states, "pe_in-" + std::to_string(i)));
 
-        for (size_t token_idx = 0; token_idx < n_tokens; ++token_idx) {
-            tensor_1 gate_out(layer.per_layer_inp_gate_weight->shape[1]);
-            mat_vec_mul(gate_out, *layer.per_layer_inp_gate_weight, gguf_file_, hidden_states[token_idx]);
-            
-            // GELU
-            for (float& x : gate_out) {
-                x = 0.5f * x * (1.0f + tanhf(sqrtf(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
-            }
+      tensor_1 norm_weight(layer.per_layer_post_norm_weight->shape[0]);
+      gguf_file_.read_tensor_data(*layer.per_layer_post_norm_weight,
+                                  norm_weight.data(),
+                                  norm_weight.size() * sizeof(float));
 
-            // Mul with inp_per_layer
-            for (size_t j = 0; j < gate_out.size(); ++j) {
-                gate_out[j] *= inp_per_layer[token_idx][i][j];
-            }
+      for (size_t token_idx = 0; token_idx < n_tokens; ++token_idx) {
+        tensor_1 gate_out(layer.per_layer_inp_gate_weight->shape[1]);
+        mat_vec_mul(gate_out, *layer.per_layer_inp_gate_weight, gguf_file_,
+                    hidden_states[token_idx]);
 
-            // Proj
-            tensor_1 proj_out(layer.per_layer_proj_weight->shape[1]);
-            mat_vec_mul(proj_out, *layer.per_layer_proj_weight, gguf_file_, gate_out);
-
-            // Post norm
-            tensor_1 normalized_proj(proj_out.size());
-            rms_norm(normalized_proj, proj_out, hparams_.f_norm_rms_eps);
-            
-            for (size_t j = 0; j < hidden_states[token_idx].size(); ++j) {
-                hidden_states[token_idx][j] += normalized_proj[j] * norm_weight[j];
-            }
+        // GELU
+        for (float& x : gate_out) {
+          x = 0.5f * x *
+              (1.0f + tanhf(sqrtf(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
         }
-        VERBOSE(print_tensor(hidden_states, "per_layer_embd_out-" + std::to_string(i)));
+
+        // Mul with inp_per_layer
+        for (size_t j = 0; j < gate_out.size(); ++j) {
+          gate_out[j] *= inp_per_layer[token_idx][i][j];
+        }
+
+        // Proj
+        tensor_1 proj_out(layer.per_layer_proj_weight->shape[1]);
+        mat_vec_mul(proj_out, *layer.per_layer_proj_weight, gguf_file_,
+                    gate_out);
+
+        // Post norm
+        tensor_1 normalized_proj(proj_out.size());
+        rms_norm(normalized_proj, proj_out, hparams_.f_norm_rms_eps);
+
+        for (size_t j = 0; j < hidden_states[token_idx].size(); ++j) {
+          hidden_states[token_idx][j] += normalized_proj[j] * norm_weight[j];
+        }
+      }
+      VERBOSE(print_tensor(hidden_states,
+                           "per_layer_embd_out-" + std::to_string(i)));
     }
 
     // layer_scalar (out_scale)
     if (layer.out_scale_weight) {
-        float out_scale;
-        gguf_file_.read_tensor_data(*layer.out_scale_weight, &out_scale, sizeof(float));
-        for (auto& state : hidden_states) {
-            for (float& val : state) val *= out_scale;
-        }
-        VERBOSE(print_tensor(hidden_states, "out_scaled-" + std::to_string(i)));
+      float out_scale;
+      gguf_file_.read_tensor_data(*layer.out_scale_weight, &out_scale,
+                                  sizeof(float));
+      for (auto& state : hidden_states) {
+        for (float& val : state) val *= out_scale;
+      }
+      VERBOSE(print_tensor(hidden_states, "out_scaled-" + std::to_string(i)));
     }
 
     VERBOSE(print_tensor(hidden_states, "l_out-" + std::to_string(i)));
@@ -949,7 +988,6 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
   VERBOSE(print_tensor(final_normalized_x, "result_norm"));
 
   // Output logits
-
 
   // Output logits
   const auto& token_embd_weight_tensor = *token_embd_weight();

@@ -138,8 +138,7 @@ std::vector<uint8_t> create_test_gguf() {
   std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
 
   // Header
-  GGUFHeader header = {GGUF_MAGIC, GGUF_VERSION, 14,
-                       0};  // metadata_kv_count is set below
+  GGUFHeader header = {GGUF_MAGIC, GGUF_VERSION, 0, 0};
 
   // Metadata
   const char* arch_key = "general.architecture";
@@ -156,7 +155,7 @@ std::vector<uint8_t> create_test_gguf() {
                               "gemma3.rope.scaling.factor"};
   float float_values[] = {1e-6f, 1000000.0f, 1.0f};
 
-  header.metadata_kv_count = std::size(uint32_keys) + std::size(float_keys);
+  header.metadata_kv_count = 1 + std::size(uint32_keys) + std::size(float_keys);
 
   memcpy(buffer.data() + offset, &header, sizeof(header));
   offset += sizeof(header);
@@ -383,6 +382,9 @@ std::vector<uint8_t> create_test_gguf() {
            writer.data_size);
     data_offset += writer.data_size;
   }
+
+  header.tensor_count = tensor_writers.size();
+  memcpy(buffer.data(), &header, sizeof(header));
 
   buffer.resize(data_section_start + data_offset);
   return buffer;

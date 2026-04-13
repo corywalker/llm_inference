@@ -647,8 +647,8 @@ void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
           w_data + row * blocks_per_row * bytes_per_block;
 
       for (size_t block = 0; block < blocks_per_row; ++block) {
-        const block_q4_K* q4k =
-            reinterpret_cast<const block_q4_K*>(row_w_ptr + block * bytes_per_block);
+        const block_q4_K* q4k = reinterpret_cast<const block_q4_K*>(
+            row_w_ptr + block * bytes_per_block);
         const block_q8_K& q8k = x_q8_k[block];
 
         const float d = f16_to_f32(q4k->d) * q8k.d;
@@ -668,7 +668,8 @@ void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
           for (int l = 0; l < 32; ++l) {
             sum_q4_q8_1 += (q4[l] & 0xF) * q8[l];
           }
-          row_sum += d1 * sum_q4_q8_1 - m1 * (q8k.bsums[is * 2] + q8k.bsums[is * 2 + 1]);
+          row_sum += d1 * sum_q4_q8_1 -
+                     m1 * (q8k.bsums[is * 2] + q8k.bsums[is * 2 + 1]);
 
           get_scale_min_k4(is + 1, q4k->scales, &sc, &m);
           const float d2 = d * sc;
@@ -678,7 +679,8 @@ void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
           for (int l = 0; l < 32; ++l) {
             sum_q4_q8_2 += (q4[l] >> 4) * q8[l + 32];
           }
-          row_sum += d2 * sum_q4_q8_2 - m2 * (q8k.bsums[(is + 1) * 2] + q8k.bsums[(is + 1) * 2 + 1]);
+          row_sum += d2 * sum_q4_q8_2 - m2 * (q8k.bsums[(is + 1) * 2] +
+                                              q8k.bsums[(is + 1) * 2 + 1]);
 
           q4 += 32;
           q8 += 64;
@@ -931,7 +933,9 @@ void mat_vec_mul_bf16(std::vector<float>& o, const TensorInfo& w_tensor,
 void mat_vec_mul(std::vector<float>& o, const TensorInfo& w_tensor,
                  const GGUFFile& gguf_file, const std::vector<float>& x) {
   if (x.size() != w_tensor.shape[0]) {
-    std::cerr << "mat_vec_mul size mismatch: tensor: " << w_tensor.name << " w_tensor.shape[0]=" << w_tensor.shape[0] << " x.size()=" << x.size() << std::endl;
+    std::cerr << "mat_vec_mul size mismatch: tensor: " << w_tensor.name
+              << " w_tensor.shape[0]=" << w_tensor.shape[0]
+              << " x.size()=" << x.size() << std::endl;
   }
   if (w_tensor.tensor_type == (uint32_t)GGUFTensorType::Q4_0) {
     mat_vec_mul_q4_0(o, w_tensor, gguf_file, x);

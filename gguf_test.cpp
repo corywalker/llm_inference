@@ -101,7 +101,7 @@ TEST(GGUFTest, TensorTypeToString) {
             "F16");
   EXPECT_EQ(tensorTypeToString(static_cast<uint32_t>(GGUFTensorType::Q4_0)),
             "Q4_0");
-  EXPECT_EQ(tensorTypeToString(12345), "UNKNOWN");
+  EXPECT_EQ(tensorTypeToString(12345), "UNKNOWN (12345)");
 }
 
 TEST(GGUFTest, LoadFile) {
