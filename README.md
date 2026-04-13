@@ -27,6 +27,7 @@ This project has been tested with:
 - [google/gemma-3-27b-it-qat-q4_0-gguf/blob/main/gemma-3-27b-it-q4_0.gguf](https://huggingface.co/google/gemma-3-27b-it-qat-q4_0-gguf/blob/main/gemma-3-27b-it-q4_0.gguf)
 - [lmstudio-community/gemma-3-1b-it-GGUF/gemma-3-1b-it-Q8_0.gguf](https://huggingface.co/lmstudio-community/gemma-3-1b-it-GGUF/blob/main/gemma-3-1b-it-Q8_0.gguf)
 - [lmstudio-community/gemma-3-4b-it-GGUF/gemma-3-4b-it-Q4_K_M.gguf](https://huggingface.co/lmstudio-community/gemma-3-4b-it-GGUF/blob/main/gemma-3-4b-it-Q4_K_M.gguf)
+- [lmstudio-community/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_K_M.gguf](https://huggingface.co/lmstudio-community/gemma-4-E2B-it-GGUF/blob/main/gemma-4-E2B-it-Q4_K_M.gguf) (Note: reasoning support temporarily unavailable)
 
 
 Known not working:
