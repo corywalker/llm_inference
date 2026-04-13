@@ -121,10 +121,15 @@ int main(int argc, char** argv) {
 
     int end_of_turn_token_id = -1;
     for (size_t i = 0; i < token_strings.size(); ++i) {
-      if (token_strings[i] == "<end_of_turn>") {
+      if (token_strings[i] == "<end_of_turn>" || token_strings[i] == "<turn|>") {
         end_of_turn_token_id = i;
         break;
       }
+    }
+
+    int eos_token_id = -1;
+    if (metadata.count("tokenizer.ggml.eos_token_id")) {
+      eos_token_id = (int)metadata.at("tokenizer.ggml.eos_token_id").scalar.u32;
     }
 
     std::cout << "Prompt: " << prompt << "\n\n";
@@ -160,7 +165,7 @@ int main(int argc, char** argv) {
       int next_token = std::distance(
           logits.begin(), std::max_element(logits.begin(), logits.end()));
 
-      if (next_token == end_of_turn_token_id) {
+      if (next_token == end_of_turn_token_id || next_token == eos_token_id) {
         break;
       }
 

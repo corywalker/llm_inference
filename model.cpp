@@ -1091,21 +1091,31 @@ void Model::load_vocabulary() {
 std::vector<int> Model::tokenize(const std::string& prompt,
                                  bool apply_chat_template) {
   std::vector<int> tokens;
-  if (bos_token_id != -1 && hparams_.architecture != "gemma4") {
-    tokens.push_back(bos_token_id);
-  }
-
   std::string processed_prompt;
   // Warning: Ideally we should be running the template in
   // tokenizer.chat_template to support more models. Just use this hardcoded
   // template for now.
   if (apply_chat_template) {
-    processed_prompt = "<start_of_turn>user\n" + prompt +
-                       "<end_of_turn>\n<start_of_turn>model\n";
+    if (hparams_.architecture == "gemma4") {
+      if (bos_token_id != -1) {
+        tokens.push_back(bos_token_id);
+      }
+      processed_prompt =
+          "<|turn>user\n" + prompt + "<turn|>\n<|turn>model\n";
+    } else {
+      if (bos_token_id != -1) {
+        tokens.push_back(bos_token_id);
+      }
+      processed_prompt = "<start_of_turn>user\n" + prompt +
+                         "<end_of_turn>\n<start_of_turn>model\n";
+    }
   } else {
     if (hparams_.architecture == "gemma4") {
       processed_prompt = prompt;
     } else {
+      if (bos_token_id != -1) {
+        tokens.push_back(bos_token_id);
+      }
       processed_prompt = " " + prompt;
     }
   }
