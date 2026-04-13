@@ -90,4 +90,14 @@ struct BlockQ8_0 {
 void quantize_row_q8_0(const std::vector<float>& x, std::vector<BlockQ8_0>& y,
                        size_t size);
 
+// Q8_K quantization block for activations
+struct block_q8_K {
+  float d;                // scaling factor
+  int8_t qs[QK_K];        // quantized values
+  int16_t bsums[QK_K/16]; // sum of quants in groups of 16
+};
+
+void quantize_row_q8_k(const std::vector<float>& x, std::vector<block_q8_K>& y,
+                       size_t size);
+
 #endif  // OPS_H

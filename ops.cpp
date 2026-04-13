@@ -138,6 +138,45 @@ void quantize_row_q8_0(const std::vector<float>& x, std::vector<BlockQ8_0>& y,
   }
 }
 
+// Reference: llama.cpp/ggml/src/ggml-quants.c : quantize_row_q8_K_ref
+void quantize_row_q8_k(const std::vector<float>& x, std::vector<block_q8_K>& y,
+                       size_t size) {
+  assert(size % QK_K == 0);
+  const size_t nb = size / QK_K;
+  y.resize(nb);
+
+  for (size_t i = 0; i < nb; i++) {
+    float max = 0;
+    float amax = 0;
+    for (int j = 0; j < QK_K; ++j) {
+      float ax = std::abs(x[i * QK_K + j]);
+      if (ax > amax) {
+        amax = ax;
+        max = x[i * QK_K + j];
+      }
+    }
+    if (!amax) {
+      y[i].d = 0;
+      memset(y[i].qs, 0, QK_K);
+      memset(y[i].bsums, 0, sizeof(y[i].bsums));
+      continue;
+    }
+    const float iscale = -127.f / max;
+    for (int j = 0; j < QK_K; ++j) {
+      int v = nearest_int(iscale * x[i * QK_K + j]);
+      y[i].qs[j] = std::max(-128, std::min(127, v));
+    }
+    for (int j = 0; j < QK_K / 16; ++j) {
+      int sum = 0;
+      for (int ii = 0; ii < 16; ++ii) {
+        sum += y[i].qs[j * 16 + ii];
+      }
+      y[i].bsums[j] = (int16_t)sum;
+    }
+    y[i].d = 1.0f / iscale;
+  }
+}
+
 // Quantized matrix-vector multiplication for Q4_0 weights
 // Reference: llama.cpp ggml_vec_dot_q4_0_q8_0
 // ARM:
@@ -587,6 +626,10 @@ void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
   const size_t blocks_per_row = n_cols / QK_K;
   const uint8_t* w_data = gguf_file.get_tensor_data(w_tensor);
 
+  // Pre-quantize x to Q8_K for parity with llama.cpp
+  std::vector<block_q8_K> x_q8_k;
+  quantize_row_q8_k(x, x_q8_k, n_cols);
+
   auto get_scale_min_k4 = [](int j, const uint8_t* q, uint8_t* d, uint8_t* m) {
     if (j < 4) {
       *d = q[j] & 63;
@@ -599,87 +642,50 @@ void mat_vec_mul_q4_k(std::vector<float>& o, const TensorInfo& w_tensor,
 
   auto compute_range = [&](size_t start_row, size_t end_row) {
     for (size_t row = start_row; row < end_row; ++row) {
-      float sum = 0.0f;
-      size_t col = 0;
+      float row_sum = 0.0f;
+      const uint8_t* row_w_ptr =
+          w_data + row * blocks_per_row * bytes_per_block;
 
       for (size_t block = 0; block < blocks_per_row; ++block) {
-        const uint8_t* block_ptr =
-            w_data + (row * blocks_per_row + block) * bytes_per_block;
-        const block_q4_K* q4k = reinterpret_cast<const block_q4_K*>(block_ptr);
+        const block_q4_K* q4k =
+            reinterpret_cast<const block_q4_K*>(row_w_ptr + block * bytes_per_block);
+        const block_q8_K& q8k = x_q8_k[block];
 
-        const float d = f16_to_f32(q4k->d);
-        const float min = f16_to_f32(q4k->dmin);
+        const float d = f16_to_f32(q4k->d) * q8k.d;
+        const float min = f16_to_f32(q4k->dmin) * q8k.d;
 
-        const uint8_t* q = q4k->qs;
+        const uint8_t* q4 = q4k->qs;
+        const int8_t* q8 = q8k.qs;
+
         int is = 0;
         uint8_t sc, m;
         for (int j = 0; j < QK_K; j += 64) {
           get_scale_min_k4(is + 0, q4k->scales, &sc, &m);
           const float d1 = d * sc;
           const float m1 = min * m;
+
+          int sum_q4_q8_1 = 0;
+          for (int l = 0; l < 32; ++l) {
+            sum_q4_q8_1 += (q4[l] & 0xF) * q8[l];
+          }
+          row_sum += d1 * sum_q4_q8_1 - m1 * (q8k.bsums[is * 2] + q8k.bsums[is * 2 + 1]);
+
           get_scale_min_k4(is + 1, q4k->scales, &sc, &m);
           const float d2 = d * sc;
           const float m2 = min * m;
 
-#if defined(__aarch64__) || defined(__arm64__)
-          float32x4_t m1v = vdupq_n_f32(m1);
-          float32x4_t d1v = vdupq_n_f32(d1);
-          float32x4_t m2v = vdupq_n_f32(m2);
-          float32x4_t d2v = vdupq_n_f32(d2);
-
-          float32x4_t accv = vdupq_n_f32(0.0f);
-
-          const uint8_t* q_ptr = q;
-          const float* x_ptr = &x[col];
-
-          for (int l = 0; l < 32; l += 8) {
-            uint8x8_t q8 = vld1_u8(q_ptr + l);
-            uint8x8_t q_lo = vand_u8(q8, vdup_n_u8(0xF));
-            uint8x8_t q_hi = vshrn_n_u16(vmovl_u8(q8), 4);
-
-            // Row 1 (low nibbles)
-            uint16x8_t l16 = vmovl_u8(q_lo);
-            float32x4_t f_lo0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(l16)));
-            float32x4_t f_lo1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(l16)));
-
-            float32x4_t x_lo0 = vld1q_f32(x_ptr + l);
-            float32x4_t x_lo1 = vld1q_f32(x_ptr + l + 4);
-
-            accv =
-                vfmaq_f32(accv, x_lo0, vsubq_f32(vmulq_f32(f_lo0, d1v), m1v));
-            accv =
-                vfmaq_f32(accv, x_lo1, vsubq_f32(vmulq_f32(f_lo1, d1v), m1v));
-
-            // Row 2 (high nibbles)
-            uint16x8_t h16 = vmovl_u8(q_hi);
-            float32x4_t f_hi0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(h16)));
-            float32x4_t f_hi1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(h16)));
-
-            float32x4_t x_hi0 = vld1q_f32(x_ptr + 32 + l);
-            float32x4_t x_hi1 = vld1q_f32(x_ptr + 32 + l + 4);
-
-            accv =
-                vfmaq_f32(accv, x_hi0, vsubq_f32(vmulq_f32(f_hi0, d2v), m2v));
-            accv =
-                vfmaq_f32(accv, x_hi1, vsubq_f32(vmulq_f32(f_hi1, d2v), m2v));
-          }
-          sum += vaddvq_f32(accv);
-          col += 64;
-#else
+          int sum_q4_q8_2 = 0;
           for (int l = 0; l < 32; ++l) {
-            float w_val = d1 * (q[l] & 0xF) - m1;
-            sum += w_val * x[col++];
+            sum_q4_q8_2 += (q4[l] >> 4) * q8[l + 32];
           }
-          for (int l = 0; l < 32; ++l) {
-            float w_val = d2 * (q[l] >> 4) - m2;
-            sum += w_val * x[col++];
-          }
-#endif
-          q += 32;
+          row_sum += d2 * sum_q4_q8_2 - m2 * (q8k.bsums[(is + 1) * 2] + q8k.bsums[(is + 1) * 2 + 1]);
+
+          q4 += 32;
+          q8 += 64;
           is += 2;
         }
       }
-      o[row] = sum;
+      o[row] = row_sum;
     }
   };
 
@@ -712,51 +718,29 @@ void mat_vec_mul_q6_k(std::vector<float>& o, const TensorInfo& w_tensor,
   const size_t blocks_per_row = n_cols / QK_K;
   const uint8_t* w_data = gguf_file.get_tensor_data(w_tensor);
 
+  // Pre-quantize x to Q8_K for parity with llama.cpp
+  std::vector<block_q8_K> x_q8_k;
+  quantize_row_q8_k(x, x_q8_k, n_cols);
+
   auto compute_range = [&](size_t start_row, size_t end_row) {
     for (size_t row = start_row; row < end_row; ++row) {
-      float sum = 0.0f;
-      size_t col = 0;
+      float row_sum = 0.0f;
+      const uint8_t* row_w_ptr =
+          w_data + row * blocks_per_row * bytes_per_block;
 
       for (size_t block = 0; block < blocks_per_row; ++block) {
-        const uint8_t* block_ptr =
-            w_data + (row * blocks_per_row + block) * bytes_per_block;
-        const block_q6_K* q6k = reinterpret_cast<const block_q6_K*>(block_ptr);
+        const block_q6_K* q6k = reinterpret_cast<const block_q6_K*>(
+            row_w_ptr + block * bytes_per_block);
+        const block_q8_K& q8k = x_q8_k[block];
 
-        const float d = f16_to_f32(q6k->d);
+        const float d = f16_to_f32(q6k->d) * q8k.d;
         const uint8_t* ql = q6k->ql;
         const uint8_t* qh = q6k->qh;
         const int8_t* sc = q6k->scales;
+        const int8_t* xq = q8k.qs;
 
         for (int n = 0; n < QK_K; n += 128) {
-#if defined(__aarch64__) || defined(__arm64__)
-          for (int l = 0; l < 32; l += 16) {
-            for (int l_inner = 0; l_inner < 16; ++l_inner) {
-              int is = (l + l_inner) / 16;
-              const uint8_t qh_val = qh[l + l_inner];
-              const int8_t q1 = (int8_t)((ql[l + l_inner + 0] & 0xF) |
-                                         (((qh_val >> 0) & 3) << 4)) -
-                                32;
-              const int8_t q2 = (int8_t)((ql[l + l_inner + 32] & 0xF) |
-                                         (((qh_val >> 2) & 3) << 4)) -
-                                32;
-              const int8_t q3 = (int8_t)((ql[l + l_inner + 0] >> 4) |
-                                         (((qh_val >> 4) & 3) << 4)) -
-                                32;
-              const int8_t q4 = (int8_t)((ql[l + l_inner + 32] >> 4) |
-                                         (((qh_val >> 6) & 3) << 4)) -
-                                32;
-
-              sum += d * sc[is + 0] * q1 * x[col + l + l_inner + 0];
-              sum += d * sc[is + 2] * q2 * x[col + l + l_inner + 32];
-              sum += d * sc[is + 4] * q3 * x[col + l + l_inner + 64];
-              sum += d * sc[is + 6] * q4 * x[col + l + l_inner + 96];
-            }
-          }
-          col += 128;
-          ql += 64;
-          qh += 32;
-          sc += 8;
-#else
+          int32_t part_sum_int = 0;
           for (int l = 0; l < 32; ++l) {
             int is = l / 16;
             const int8_t q1 =
@@ -768,19 +752,19 @@ void mat_vec_mul_q6_k(std::vector<float>& o, const TensorInfo& w_tensor,
             const int8_t q4 =
                 (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
 
-            sum += d * sc[is + 0] * q1 * x[col + l + 0];
-            sum += d * sc[is + 2] * q2 * x[col + l + 32];
-            sum += d * sc[is + 4] * q3 * x[col + l + 64];
-            sum += d * sc[is + 6] * q4 * x[col + l + 96];
+            part_sum_int += sc[is + 0] * q1 * xq[l + 0];
+            part_sum_int += sc[is + 2] * q2 * xq[l + 32];
+            part_sum_int += sc[is + 4] * q3 * xq[l + 64];
+            part_sum_int += sc[is + 6] * q4 * xq[l + 96];
           }
-          col += 128;
+          row_sum += d * (float)part_sum_int;
           ql += 64;
           qh += 32;
           sc += 8;
-#endif
+          xq += 128;
         }
       }
-      o[row] = sum;
+      o[row] = row_sum;
     }
   };
 

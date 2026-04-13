@@ -138,10 +138,12 @@ std::vector<uint8_t> create_test_gguf() {
   std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
 
   // Header
-  GGUFHeader header = {GGUF_MAGIC, GGUF_VERSION, 13,
+  GGUFHeader header = {GGUF_MAGIC, GGUF_VERSION, 14,
                        0};  // metadata_kv_count is set below
 
   // Metadata
+  const char* arch_key = "general.architecture";
+  const char* arch_value = "gemma3";
   const char* uint32_keys[] = {"gemma3.block_count", "gemma3.embedding_length",
                                "gemma3.feed_forward_length",
                                "gemma3.attention.head_count",
@@ -158,6 +160,22 @@ std::vector<uint8_t> create_test_gguf() {
 
   memcpy(buffer.data() + offset, &header, sizeof(header));
   offset += sizeof(header);
+
+  {
+    uint64_t key_len = strlen(arch_key);
+    memcpy(buffer.data() + offset, &key_len, sizeof(key_len));
+    offset += sizeof(key_len);
+    memcpy(buffer.data() + offset, arch_key, key_len);
+    offset += key_len;
+    uint32_t type = (uint32_t)GGUFType::STRING;
+    memcpy(buffer.data() + offset, &type, sizeof(type));
+    offset += sizeof(type);
+    uint64_t val_len = strlen(arch_value);
+    memcpy(buffer.data() + offset, &val_len, sizeof(val_len));
+    offset += sizeof(val_len);
+    memcpy(buffer.data() + offset, arch_value, val_len);
+    offset += val_len;
+  }
 
   for (size_t i = 0; i < std::size(uint32_keys); ++i) {
     uint64_t key_len = strlen(uint32_keys[i]);
