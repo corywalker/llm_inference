@@ -746,22 +746,27 @@ tensor_2 Model::forward(const std::vector<int>& tokens, int pos) {
     }
     VERBOSE(print_tensor(v_vectors, "Vcur-" + std::to_string(i)));
     
+    tensor_3 v_reshaped = reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head_v);
+    VERBOSE(print_tensor(v_reshaped, "Vcur-" + std::to_string(i) + " (reshaped)"));
+    
     tensor_3 v_heads;
     if (hparams_.architecture == "gemma4") {
-        // Gemma 4 RMSNorm on V
-        tensor_2 v_normed;
-        v_normed.reserve(n_tokens);
-        for (const auto& v_vec : v_vectors) {
-            tensor_1 normalized_v(v_vec.size());
-            rms_norm(normalized_v, v_vec, hparams_.f_norm_rms_eps);
-            v_normed.push_back(normalized_v);
+        // Gemma 4 RMSNorm on V (no weights)
+        v_heads.reserve(n_tokens);
+        for (const auto& v_token_heads : v_reshaped) {
+            tensor_2 layer_normed_heads;
+            layer_normed_heads.reserve(n_head_kv);
+            for (const auto& v_head_vec : v_token_heads) {
+                tensor_1 normalized_v(v_head_vec.size());
+                rms_norm(normalized_v, v_head_vec, hparams_.f_norm_rms_eps);
+                layer_normed_heads.push_back(normalized_v);
+            }
+            v_heads.push_back(layer_normed_heads);
         }
-        v_heads = reshape_3d(v_normed, n_tokens, n_head_kv, n_embd_head_v);
+        VERBOSE(print_tensor(v_heads, "Vcur_normed-" + std::to_string(i)));
     } else {
-        v_heads = reshape_3d(v_vectors, n_tokens, n_head_kv, n_embd_head_v);
+        v_heads = v_reshaped;
     }
-    VERBOSE(
-        print_tensor(v_heads, "Vcur-" + std::to_string(i) + " (reshaped)"));
 
     // Note: run_attn still needs dequantized output_weights for now
     // TODO: Optimize run_attn to use Q4_0 directly
