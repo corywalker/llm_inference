@@ -133,7 +133,23 @@ int main(int argc, char** argv) {
       eos_token_id = (int)metadata.at("tokenizer.ggml.eos_token_id").scalar.u32;
     }
 
+    int think_token_id = -1;
+    int channel_token_id = -1;
+    for (size_t i = 0; i < token_strings.size(); ++i) {
+      const std::string& ts = token_strings[i];
+      if (ts == "<|think|>" || ts == "<|channel>thought" || ts == "<think>") {
+        think_token_id = i;
+      }
+      if (ts == "<channel|>" || ts == "<|channel|>" || ts == "</think>") {
+        channel_token_id = i;
+      }
+    }
+
     std::cout << "Prompt: " << prompt << "\n\n";
+
+    if (!tokens.empty() && tokens.back() == think_token_id) {
+      std::cout << "[Start thinking]\n";
+    }
 
     std::vector<std::vector<float>> logits_vectors = model.forward(tokens, 0);
     int pos = tokens.size();
@@ -170,7 +186,18 @@ int main(int argc, char** argv) {
         break;
       }
 
-      std::cout << replace_special_space(token_strings[next_token]);
+      if (verbose_g) {
+        std::cout << "\nGenerated Token ID: " << next_token
+                  << " String: \"" << token_strings[next_token] << "\"" << std::endl;
+      }
+
+      if (next_token == think_token_id) {
+        std::cout << "\n[Start thinking]\n";
+      } else if (next_token == channel_token_id) {
+        std::cout << "\n[End thinking]\n";
+      } else {
+        std::cout << replace_special_space(token_strings[next_token]);
+      }
       std::cout.flush();
 
       num_generated_tokens++;

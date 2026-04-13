@@ -1097,10 +1097,16 @@ std::vector<int> Model::tokenize(const std::string& prompt,
   // template for now.
   if (apply_chat_template) {
     if (hparams_.architecture == "gemma4") {
-      if (bos_token_id != -1) {
+      bool add_bos = true;
+      const auto& metadata = gguf_file_.get_metadata();
+      if (metadata.count("tokenizer.ggml.add_bos_token")) {
+        add_bos = metadata.at("tokenizer.ggml.add_bos_token").scalar.b;
+      }
+      if (add_bos && bos_token_id != -1) {
         tokens.push_back(bos_token_id);
       }
-      processed_prompt = "<|turn>user\n" + prompt + "<turn|>\n<|turn>model\n";
+      processed_prompt =
+          "<|turn>user\n" + prompt + "<turn|>\n<|turn>model\n<|think|>";
     } else {
       if (bos_token_id != -1) {
         tokens.push_back(bos_token_id);
