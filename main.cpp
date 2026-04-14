@@ -102,7 +102,9 @@ int main(int argc, char** argv) {
     }
 
     std::cout << std::endl;
-    std::vector<int> tokens = model.tokenize(prompt, apply_chat_template);
+    bool prefilled_thinking = false;
+    std::vector<int> tokens =
+        model.tokenize(prompt, apply_chat_template, &prefilled_thinking);
     // Print the tokens
     if (verbose_g) {
       std::cout << "Tokenized input:" << std::endl;
@@ -137,18 +139,27 @@ int main(int argc, char** argv) {
     int channel_token_id = -1;
     for (size_t i = 0; i < token_strings.size(); ++i) {
       const std::string& ts = token_strings[i];
-      if (ts == "<|think|>" || ts == "<|channel>thought" || ts == "<think>") {
+      // Prefer <|channel>thought (Gemma4) over <|think|> / <think>.
+      if (ts == "<|channel>thought") {
+        think_token_id = i;
+      } else if ((ts == "<|think|>" || ts == "<think>") &&
+                 think_token_id == -1) {
         think_token_id = i;
       }
-      if (ts == "<channel|>" || ts == "<|channel|>" || ts == "</think>") {
+      // Prefer <channel|> (Gemma4) over <|channel|> / </think>.
+      if (ts == "<channel|>") {
+        channel_token_id = i;
+      } else if ((ts == "<|channel|>" || ts == "</think>") &&
+                 channel_token_id == -1) {
         channel_token_id = i;
       }
     }
 
     std::cout << "Prompt: " << prompt << "\n\n";
 
-    if (!tokens.empty() && tokens.back() == think_token_id) {
-      std::cout << "[Start thinking]\n";
+    bool is_thinking = prefilled_thinking;
+    if (is_thinking) {
+      std::cout << "\x1b[90m[Start thinking]\n";
     }
 
     std::vector<std::vector<float>> logits_vectors = model.forward(tokens, 0);
@@ -187,14 +198,16 @@ int main(int argc, char** argv) {
       }
 
       if (verbose_g) {
-        std::cout << "\nGenerated Token ID: " << next_token
-                  << " String: \"" << token_strings[next_token] << "\"" << std::endl;
+        std::cout << "\nGenerated Token ID: " << next_token << " String: \""
+                  << token_strings[next_token] << "\"" << std::endl;
       }
 
       if (next_token == think_token_id) {
-        std::cout << "\n[Start thinking]\n";
+        is_thinking = true;
+        std::cout << "\x1b[90m\n[Start thinking]\n";
       } else if (next_token == channel_token_id) {
-        std::cout << "\n[End thinking]\n";
+        is_thinking = false;
+        std::cout << "\x1b[0m\n[End thinking]\n\n";
       } else {
         std::cout << replace_special_space(token_strings[next_token]);
       }
@@ -211,6 +224,9 @@ int main(int argc, char** argv) {
     }
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end_time - start_time;
+    if (is_thinking) {
+      std::cout << "\x1b[0m";
+    }
     std::cout << std::endl;
     std::cout << "\nGenerated " << num_generated_tokens << " tokens in "
               << elapsed.count() << " s ("

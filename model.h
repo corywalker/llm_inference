@@ -108,10 +108,13 @@ class Model {
    * @brief Tokenizes a prompt string.
    * @param prompt The input string.
    * @param apply_chat_template Whether to apply the chat template.
+   * @param out_prefilled_thinking If non-null, set to true when the chat
+   *        template pre-fills a thinking token so the caller can initialize
+   *        its thinking-state tracking accordingly.
    * @return Vector of token IDs.
    */
-  std::vector<int> tokenize(const std::string& prompt,
-                            bool apply_chat_template);
+  std::vector<int> tokenize(const std::string& prompt, bool apply_chat_template,
+                            bool* out_prefilled_thinking = nullptr);
 
  private:
   void load_hparams(GGUFFile& gguf_file);

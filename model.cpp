@@ -1089,7 +1089,11 @@ void Model::load_vocabulary() {
 }
 
 std::vector<int> Model::tokenize(const std::string& prompt,
-                                 bool apply_chat_template) {
+                                 bool apply_chat_template,
+                                 bool* out_prefilled_thinking) {
+  if (out_prefilled_thinking) {
+    *out_prefilled_thinking = false;
+  }
   std::vector<int> tokens;
   std::string processed_prompt;
   // Warning: Ideally we should be running the template in
@@ -1106,7 +1110,10 @@ std::vector<int> Model::tokenize(const std::string& prompt,
         tokens.push_back(bos_token_id);
       }
       processed_prompt =
-          "<|turn>user\n" + prompt + "<turn|>\n<|turn>model\n<|think|>";
+          "<|turn>user\n" + prompt + "<turn|>\n<|turn>model\n<|channel>thought";
+      if (out_prefilled_thinking) {
+        *out_prefilled_thinking = true;
+      }
     } else {
       if (bos_token_id != -1) {
         tokens.push_back(bos_token_id);
