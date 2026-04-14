@@ -1,11 +1,17 @@
 #ifndef MODEL_H
 #define MODEL_H
 
+#include <string>
 #include <vector>
 
 #include "gguf.h"
 #include "ops.h"
 #include "tensor.h"
+
+struct ChatMessage {
+  std::string role;  // "user", "assistant", or "system"
+  std::string content;
+};
 
 /**
  * @brief Represents a layer in the Key-Value cache.
@@ -115,6 +121,24 @@ class Model {
    */
   std::vector<int> tokenize(const std::string& prompt, bool apply_chat_template,
                             bool* out_prefilled_thinking = nullptr);
+
+  /**
+   * @brief Applies the model's chat template and tokenizes a conversation.
+   * @param messages The conversation history.
+   * @param enable_thinking Whether to enable the reasoning channel.
+   * @param out_prefilled_thinking If non-null, set to true when the template
+   *        pre-fills a thinking token.
+   * @return Vector of token IDs.
+   */
+  std::vector<int> tokenize_chat(const std::vector<ChatMessage>& messages,
+                                 bool enable_thinking,
+                                 bool* out_prefilled_thinking = nullptr);
+
+  /**
+   * @brief Clears the KV cache, allowing the model to process a new sequence
+   *        from position 0.
+   */
+  void reset_kv_cache();
 
  private:
   void load_hparams(GGUFFile& gguf_file);

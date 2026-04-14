@@ -60,6 +60,7 @@ cc_library(
         ":gguf",
         ":ops",
         ":common",
+        "//third_party/inja:inja",
     ],
     visibility = ["//:__subpackages__"],
 )

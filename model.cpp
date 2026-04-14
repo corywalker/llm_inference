@@ -1,8 +1,10 @@
 #include "model.h"
 
 #include <cmath>
+#include <inja/inja.hpp>
 #include <iostream>
 #include <map>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -1188,4 +1190,104 @@ std::vector<int> Model::tokenize(const std::string& prompt,
   }
 
   return tokens;
+}
+
+void Model::reset_kv_cache() {
+  for (auto& layer : kv_cache_) {
+    layer.k.clear();
+    layer.v.clear();
+  }
+}
+
+std::vector<int> Model::tokenize_chat(const std::vector<ChatMessage>& messages,
+                                      bool enable_thinking,
+                                      bool* out_prefilled_thinking) {
+  if (out_prefilled_thinking) {
+    *out_prefilled_thinking = false;
+  }
+
+  const auto& metadata = gguf_file_.get_metadata();
+
+  // Look up BOS/EOS token strings.
+  std::string bos_str =
+      (bos_token_id >= 0 && bos_token_id < (int)id_to_token.size())
+          ? id_to_token[bos_token_id]
+          : "";
+  std::string eos_str;
+  if (metadata.count("tokenizer.ggml.eos_token_id")) {
+    int eos_id = (int)metadata.at("tokenizer.ggml.eos_token_id").scalar.u32;
+    if (eos_id >= 0 && eos_id < (int)id_to_token.size()) {
+      eos_str = id_to_token[eos_id];
+    }
+  }
+
+  if (metadata.count("tokenizer.chat_template")) {
+    // Render the model's own chat template via inja (C++ Jinja2).
+    const std::string& tmpl_src = metadata.at("tokenizer.chat_template").str;
+
+    nlohmann::json msgs_json = nlohmann::json::array();
+    for (const auto& msg : messages) {
+      msgs_json.push_back({{"role", msg.role}, {"content", msg.content}});
+    }
+    nlohmann::json data = {
+        {"messages", msgs_json},         {"bos_token", bos_str},
+        {"eos_token", eos_str},          {"enable_thinking", enable_thinking},
+        {"add_generation_prompt", true}, {"tools", nlohmann::json::array()},
+    };
+
+    try {
+      inja::Environment env;
+      std::string rendered = env.render(tmpl_src, data);
+      LOG_VERBOSE("Rendered chat template:\n" << rendered);
+
+      // Detect whether the rendered output ends with a thinking pre-fill token.
+      const std::string think_tag = "<|channel>thought";
+      if (out_prefilled_thinking && rendered.size() >= think_tag.size() &&
+          rendered.compare(rendered.size() - think_tag.size(), think_tag.size(),
+                           think_tag) == 0) {
+        *out_prefilled_thinking = true;
+      }
+
+      return tokenize(rendered, /*apply_chat_template=*/false,
+                      /*out_prefilled_thinking=*/nullptr);
+    } catch (const std::exception& e) {
+      // inja doesn't support every Jinja2 extension. Fall through to the
+      // hardcoded implementation below.
+      LOG_VERBOSE("Chat template rendering failed ("
+                  << e.what() << "), using hardcoded template.");
+    }
+  }
+
+  // Fallback: hardcoded templates for known architectures.
+  std::string formatted;
+  if (hparams_.architecture == "gemma4") {
+    bool add_bos = true;
+    if (metadata.count("tokenizer.ggml.add_bos_token")) {
+      add_bos = metadata.at("tokenizer.ggml.add_bos_token").scalar.b;
+    }
+    if (add_bos && !bos_str.empty()) {
+      formatted += bos_str;
+    }
+    for (const auto& msg : messages) {
+      const std::string role = (msg.role == "assistant") ? "model" : msg.role;
+      formatted += "<|turn>" + role + "\n" + msg.content + "<turn|>\n";
+    }
+    formatted += "<|turn>model\n";
+    if (enable_thinking) {
+      formatted += "<|channel>thought";
+      if (out_prefilled_thinking) *out_prefilled_thinking = true;
+    }
+  } else {
+    if (!bos_str.empty()) formatted += bos_str;
+    for (const auto& msg : messages) {
+      if (msg.role == "user") {
+        formatted += "<start_of_turn>user\n" + msg.content + "<end_of_turn>\n";
+      } else if (msg.role == "assistant") {
+        formatted += "<start_of_turn>model\n" + msg.content + "<end_of_turn>\n";
+      }
+    }
+    formatted += "<start_of_turn>model\n";
+  }
+  return tokenize(formatted, /*apply_chat_template=*/false,
+                  /*out_prefilled_thinking=*/nullptr);
 }
